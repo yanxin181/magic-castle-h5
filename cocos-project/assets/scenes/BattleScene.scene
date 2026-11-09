@@ -1,0 +1,93 @@
+[
+  {
+    "__type__": "cc.SceneAsset",
+    "_name": "BattleScene",
+    "scene": { "__id__": 1 }
+  },
+  {
+    "__type__": "cc.Scene",
+    "_name": "BattleScene",
+    "_objFlags": 0,
+    "_parent": null,
+    "_children": [{ "__id__": 2 }],
+    "_active": true,
+    "_components": [],
+    "_prefab": null,
+    "_lpos": { "__type__": "cc.Vec3", "x": 0, "y": 0, "z": 0 },
+    "_lrot": { "__type__": "cc.Quat", "x": 0, "y": 0, "z": 0, "w": 1 },
+    "_lscale": { "__type__": "cc.Vec3", "x": 1, "y": 1, "z": 1 }
+  },
+  {
+    "__type__": "cc.Node",
+    "_name": "Canvas",
+    "_objFlags": 0,
+    "_parent": { "__id__": 1 },
+    "_children": [{ "__id__": 4 }],
+    "_active": true,
+    "_components": [{ "__id__": 3 }, { "__id__": 5 }],
+    "_prefab": null,
+    "_lpos": { "__type__": "cc.Vec3", "x": 0, "y": 0, "z": 0 },
+    "_lrot": { "__type__": "cc.Quat", "x": 0, "y": 0, "z": 0, "w": 1 },
+    "_lscale": { "__type__": "cc.Vec3", "x": 1, "y": 1, "z": 1 },
+    "_layer": 33554432
+  },
+  {
+    "__type__": "cc.Canvas",
+    "node": { "__id__": 2 },
+    "_designResolution": { "__type__": "cc.Size", "width": 1280, "height": 720 },
+    "_fitWidth": false,
+    "_fitHeight": true
+  },
+  {
+    "__type__": "cc.Node",
+    "_name": "BattleRoot",
+    "_objFlags": 0,
+    "_parent": { "__id__": 2 },
+    "_children": [],
+    "_active": true,
+    "_components": [{ "__id__": 6 }, { "__id__": 7 }],
+    "_prefab": null,
+    "_lpos": { "__type__": "cc.Vec3", "x": 0, "y": 0, "z": 0 },
+    "_lrot": { "__type__": "cc.Quat", "x": 0, "y": 0, "z": 0, "w": 1 },
+    "_lscale": { "__type__": "cc.Vec3", "x": 1, "y": 1, "z": 1 },
+    "_layer": 1073741824
+  }
+,
+  {
+    "__type__": "GameManager",
+    "_name": "GameManager",
+    "_objFlags": 0,
+    "node": { "__id__": 2 },
+    "_enabled": true,
+    "maxHealth": 100
+  },
+  {
+    "__type__": "BattleManager",
+    "_name": "BattleManager",
+    "_objFlags": 0,
+    "node": { "__id__": 4 },
+    "_enabled": true,
+    "enemyRoot": null,
+    "player": null,
+    "gameManager": { "__id__": 5 },
+    "spawnInterval": 2
+  },
+  {
+    "__type__": "UiManager",
+    "_name": "UiManager",
+    "_objFlags": 0,
+    "node": { "__id__": 4 },
+    "_enabled": true,
+    "gameManager": { "__id__": 5 },
+    "hpLabel": null,
+    "expLabel": null,
+    "levelLabel": null,
+    "diceLabel": null,
+    "evolutionLabel": null,
+    "bossLabel": null,
+    "bossBar": null,
+    "cardsRoot": null,
+    "victoryRoot": null
+  }
+]
+

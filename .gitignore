@@ -1,0 +1,6 @@
+.superpowers/
+preview/__pycache__/
+cocos-project/library/
+cocos-project/temp/
+cocos-project/build/
+cocos-project/deploy/

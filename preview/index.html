@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>魔法城堡 · 守护试玩</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="game-frame" aria-label="魔法城堡横屏试玩广告">
+      <canvas id="gameCanvas" width="1280" height="720" aria-label="战斗画面"></canvas>
+      <div class="top-hud" aria-live="polite">
+        <span class="brand-pill">✦ 魔法城堡</span>
+        <span class="hint-pill">点击敌人 · 守护城门</span>
+      </div>
+      <div class="start-card ui-card">
+        <div class="crest">✦</div>
+        <h1>守护魔法城堡</h1>
+        <p>怪物从天而降，点按敌人释放星光攻击。</p>
+        <button id="startButton" class="primary-button" type="button">开始冒险</button>
+      </div>
+      <section id="cardPanel" class="modal-panel" aria-label="升级卡牌" role="dialog">
+        <div class="modal-card ui-card">
+          <p class="eyebrow">LEVEL UP</p>
+          <h2>选择一张魔法卡</h2>
+          <p class="modal-subtitle">强化小莓，继续守护城堡</p>
+          <div id="cardGrid" class="card-grid"></div>
+          <p id="diceResult" class="dice-result" aria-live="polite"></p>
+        </div>
+      </section>
+      <section id="victoryPanel" class="modal-panel" aria-label="胜利结算" role="dialog">
+        <div class="modal-card ui-card victory-card">
+          <p class="eyebrow">CASTLE SAVED</p>
+          <h2>城堡守住啦！</h2>
+          <p>小莓已经进化成星辉守护者。</p>
+          <div class="victory-actions">
+            <button id="downloadButton" class="primary-button" type="button">立即下载</button>
+            <button id="restartButton" class="ghost-button" type="button">再玩一次</button>
+          </div>
+        </div>
+      </section>
+    </section>
+    <p class="rotate-hint">请将设备横屏体验</p>
+  </main>
+  <script src="game.js" defer></script>
+</body>
+</html>
