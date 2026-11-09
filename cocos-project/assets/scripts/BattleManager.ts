@@ -12,8 +12,10 @@ export class BattleManager extends Component {
     @property(Node) player: Node | null = null;
     @property(GameManager) gameManager: GameManager | null = null;
     @property({ tooltip: 'Seconds between regular enemy spawns.' }) spawnInterval = 2;
+    @property({ tooltip: 'Seconds between normal attacks.' }) attackInterval = 0.72;
 
     private elapsed = 0;
+    private attackClock = 0;
     private serial = 0;
     private enemies: EnemyRuntime[] = [];
     private arenaGraphics: Graphics | null = null;
@@ -36,6 +38,11 @@ export class BattleManager extends Component {
         const state = this.gameManager?.state ?? GameState.Battle;
         if (state !== GameState.Battle && state !== GameState.Boss) return;
         this.elapsed += deltaTime;
+        this.attackClock += deltaTime;
+        if (this.attackClock >= this.attackInterval && this.enemies.length > 0) {
+            this.attackClock = 0;
+            this.hitEnemy(this.enemies[0].node, 1);
+        }
         if (state === GameState.Battle && !this.boss && this.elapsed >= this.spawnInterval) {
             this.elapsed = 0;
             this.spawnEnemy();
@@ -147,5 +154,7 @@ export class BattleManager extends Component {
         this.arenaGraphics.stroke();
     }
 }
+
+
 
 
