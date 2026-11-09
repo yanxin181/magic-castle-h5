@@ -91,7 +91,9 @@
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
     state.spawnClock += dt; state.attackClock += dt; state.skillClock += dt;
     if (state.phase === 'battle' && state.spawnClock > Math.max(1.2, 2.5 - state.level * .2)) { state.spawnClock = 0; spawnMonster(false); }
-    if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); } if (state.skillClock > (state.selectedSkill === 'wind' ? .38 : 1.1)) { state.skillClock = 0; shoot('skill'); }
+    if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
+    // 技能自动释放暂时注释，先单独验证主角普通攻击。
+    // if (state.skillClock > (state.selectedSkill === 'wind' ? .38 : 1.1)) { state.skillClock = 0; shoot('skill'); }
     state.monsters.forEach(function (m) { if (!m.boss) m.y += m.speed * dt; if (m.y > H - 160) { m.y = -40; state.hero.hp -= m.boss ? 14 : 5; if (state.hero.hp <= 0) state.hero.hp = state.hero.maxHp; } });
     state.projectiles.forEach(function (p) {
       if (!p.target || state.monsters.indexOf(p.target) < 0) { p.life = -1; return; }
@@ -132,6 +134,8 @@
     restart: restart
   };
 }());
+
+
 
 
 
