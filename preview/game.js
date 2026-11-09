@@ -31,7 +31,10 @@
   function emit(x, y, color, n) { for (var i = 0; i < (n || 6); i++) state.particles.push({ x: x, y: y, vx: (Math.random() - .5) * 120, vy: -30 - Math.random() * 90, life: .55 + Math.random() * .35, color: color || '#fff' }); }
   function spawnMonster(boss) {
     var m = { id: Math.random().toString(36).slice(2), x: 95 + Math.random() * (W - 190), y: boss ? 72 : -38, r: boss ? 58 : 31, hp: boss ? 10 : 1, maxHp: boss ? 10 : 1, speed: boss ? 8 : 16 + Math.random() * 14, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
-    state.monsters.push(m); shoot('basic'); return m;
+    state.monsters.push(m);
+    // 普通攻击自动释放暂时注释，改为点击怪物触发。
+    // shoot('basic');
+    return m;
   }
   function damageEnemy(monsterOrId, amount) {
     var m = typeof monsterOrId === 'object' ? monsterOrId : state.monsters.find(function (x) { return x.id === monsterOrId; });
@@ -91,7 +94,8 @@
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
     state.spawnClock += dt; state.attackClock += dt; state.skillClock += dt;
     if (state.phase === 'battle' && state.spawnClock > Math.max(1.2, 2.5 - state.level * .2)) { state.spawnClock = 0; spawnMonster(false); }
-    if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
+    // 普通攻击自动释放暂时注释，改为点击怪物触发。
+    // if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
     // 技能自动释放暂时注释，先单独验证主角普通攻击。
     // if (state.skillClock > (state.selectedSkill === 'wind' ? .38 : 1.1)) { state.skillClock = 0; shoot('skill'); }
     state.monsters.forEach(function (m) { if (!m.boss) m.y += m.speed * dt; if (m.y > H - 160) { m.y = -40; state.hero.hp -= m.boss ? 14 : 5; if (state.hero.hp <= 0) state.hero.hp = state.hero.maxHp; } });
@@ -134,6 +138,8 @@
     restart: restart
   };
 }());
+
+
 
 
 

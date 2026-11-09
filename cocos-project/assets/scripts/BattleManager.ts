@@ -38,11 +38,12 @@ export class BattleManager extends Component {
         const state = this.gameManager?.state ?? GameState.Battle;
         if (state !== GameState.Battle && state !== GameState.Boss) return;
         this.elapsed += deltaTime;
-        this.attackClock += deltaTime;
-        if (this.attackClock >= this.attackInterval && this.enemies.length > 0) {
-            this.attackClock = 0;
-            this.hitEnemy(this.enemies[0].node, 1);
-        }
+        // 普通攻击自动释放暂时注释，改为点击敌人触发。
+        // this.attackClock += deltaTime;
+        // if (this.attackClock >= this.attackInterval && this.enemies.length > 0) {
+            // this.attackClock = 0;
+            // this.hitEnemy(this.enemies[0].node, 1);
+        // }
         if (state === GameState.Battle && !this.boss && this.elapsed >= this.spawnInterval) {
             this.elapsed = 0;
             this.spawnEnemy();
@@ -62,7 +63,7 @@ export class BattleManager extends Component {
         const node = this.createPlaceholderNode(enemyData.id, new Color(220, 90, 90, 255));
         node.setPosition(RECT.arena.x + 60 + Math.random() * (RECT.arena.width - 120), RECT.arena.y + RECT.arena.height);
         this.enemies.push({ data: enemyData, node });
-                this.attackClock = this.attackInterval;
+        // this.attackClock = this.attackInterval;
         return enemyData;
     }
 
@@ -155,6 +156,9 @@ export class BattleManager extends Component {
         this.arenaGraphics.stroke();
     }
 }
+
+
+
 
 
 
