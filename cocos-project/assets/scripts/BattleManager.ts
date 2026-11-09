@@ -62,6 +62,7 @@ export class BattleManager extends Component {
         const node = this.createPlaceholderNode(enemyData.id, new Color(220, 90, 90, 255));
         node.setPosition(RECT.arena.x + 60 + Math.random() * (RECT.arena.width - 120), RECT.arena.y + RECT.arena.height);
         this.enemies.push({ data: enemyData, node });
+                this.attackClock = this.attackInterval;
         return enemyData;
     }
 
@@ -154,6 +155,8 @@ export class BattleManager extends Component {
         this.arenaGraphics.stroke();
     }
 }
+
+
 
 
 

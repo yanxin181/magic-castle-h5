@@ -31,7 +31,7 @@
   function emit(x, y, color, n) { for (var i = 0; i < (n || 6); i++) state.particles.push({ x: x, y: y, vx: (Math.random() - .5) * 120, vy: -30 - Math.random() * 90, life: .55 + Math.random() * .35, color: color || '#fff' }); }
   function spawnMonster(boss) {
     var m = { id: Math.random().toString(36).slice(2), x: 95 + Math.random() * (W - 190), y: boss ? 72 : -38, r: boss ? 58 : 31, hp: boss ? 10 : 1, maxHp: boss ? 10 : 1, speed: boss ? 8 : 16 + Math.random() * 14, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
-    state.monsters.push(m); return m;
+    state.monsters.push(m); shoot('basic'); return m;
   }
   function damageEnemy(monsterOrId, amount) {
     var m = typeof monsterOrId === 'object' ? monsterOrId : state.monsters.find(function (x) { return x.id === monsterOrId; });
@@ -85,7 +85,7 @@
   function nearestMonster() {
     var best = null, d0 = Infinity; state.monsters.forEach(function (m) { var d = Math.abs(m.x - state.hero.x) + Math.abs(m.y - state.hero.y); if (d < d0) { d0 = d; best = m; } }); return best;
   }
-  function shoot(kind) { var m = nearestMonster(); if (m) state.projectiles.push({ x: state.hero.x, y: state.hero.y - 32, target: m, speed: kind === 'skill' ? 420 : 360, life: 1.5, kind: kind || 'basic', damage: kind === 'skill' && state.selectedSkill === 'spark' ? 2 : 1 }); }
+  function shoot(kind) { var m = nearestMonster(); if (m) state.projectiles.push({ x: state.hero.x, y: state.hero.y - 32, target: m, speed: kind === 'skill' ? 420 : 720, life: 3, kind: kind || 'basic', damage: kind === 'skill' && state.selectedSkill === 'spark' ? 2 : 1 }); }
   function update(dt) {
     state.elapsed += dt; state.particles.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 130 * dt; p.life -= dt; }); state.particles = state.particles.filter(function (p) { return p.life > 0; }); state.floats.forEach(function (f) { f.y -= 22 * dt; f.life -= dt; }); state.floats = state.floats.filter(function (f) { return f.life > 0; }); state.xpStars.forEach(function (s) { s.y -= 30 * dt; s.life -= dt; }); state.xpStars = state.xpStars.filter(function (s) { return s.life > 0; });
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
@@ -132,6 +132,8 @@
     restart: restart
   };
 }());
+
+
 
 
 
