@@ -6,6 +6,7 @@
   canvas.width = 1280; canvas.height = 720;
   var ctx = canvas.getContext('2d'), W = 1280, H = 720;
   var startButton = document.getElementById('startButton') || document.getElementById('start-button');
+  var startCard = document.querySelector('.start-card');
   var cardPanel = document.getElementById('cardPanel'), cardGrid = document.getElementById('cardGrid');
   var diceResult = document.getElementById('diceResult'), victoryPanel = document.getElementById('victoryPanel');
   var downloadButton = document.getElementById('downloadButton'), thresholds = [30, 70, 120, 180];
@@ -23,10 +24,10 @@
     state.phase = 'start'; state.level = 1; state.xp = 0; state.kills = 0; state.nextXp = thresholds[0];
     state.monsters = []; state.projectiles = []; state.particles = []; state.floats = []; state.xpStars = []; state.selectedSkill = null; state.upgraded = false; state.bossSpawned = false;
     state.elapsed = 0; state.spawnClock = 0; state.fireClock = 0; state.floats = []; state.xpStars = []; state.unlockedSkills = ['tornado']; state.selectedSkill = 'tornado'; state.hero = { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false };
-    hide(cardPanel); hide(victoryPanel); if (diceResult) diceResult.textContent = '';
+    hide(cardPanel); hide(victoryPanel); show(startCard, 'block'); if (diceResult) diceResult.textContent = '';
     if (startButton) { show(startButton, 'inline-flex'); startButton.disabled = false; }
   }
-  function startGame() { state.phase = 'battle'; state.last = performance.now(); hide(cardPanel); hide(victoryPanel); hide(startButton); requestAnimationFrame(loop); }
+  function startGame() { state.phase = 'battle'; state.last = performance.now(); hide(cardPanel); hide(victoryPanel); hide(startCard); requestAnimationFrame(loop); }
   function emit(x, y, color, n) { for (var i = 0; i < (n || 6); i++) state.particles.push({ x: x, y: y, vx: (Math.random() - .5) * 120, vy: -30 - Math.random() * 90, life: .55 + Math.random() * .35, color: color || '#fff' }); }
   function spawnMonster(boss) {
     var m = { id: Math.random().toString(36).slice(2), x: 95 + Math.random() * (W - 190), y: boss ? 72 : -38, r: boss ? 58 : 31, hp: boss ? 10 : 1, maxHp: boss ? 10 : 1, speed: boss ? 8 : 16 + Math.random() * 14, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
@@ -79,7 +80,7 @@
     b.addEventListener('click', function () { state.upgraded = true; state.hero.upgraded = true; hide(cardPanel); resumeBattle(); }); cardGrid.appendChild(b); show(cardPanel, 'flex');
   }
   function resumeBattle() { state.phase = 'battle'; state.spawnClock = 0; state.fireClock = 0; if (state.level >= 5 && !state.bossSpawned) { state.phase = 'boss'; state.bossSpawned = true; spawnMonster(true); } }
-  function win() { state.phase = 'victory'; hide(cardPanel); show(victoryPanel, 'flex'); }
+  function win() { state.phase = 'victory'; hide(startCard); hide(cardPanel); show(victoryPanel, 'flex'); }
   function restart() { resetWorld(); draw(); }
   function nearestMonster() {
     var best = null, d0 = Infinity; state.monsters.forEach(function (m) { var d = Math.abs(m.x - state.hero.x) + Math.abs(m.y - state.hero.y); if (d < d0) { d0 = d; best = m; } }); return best;
@@ -131,6 +132,8 @@
     restart: restart
   };
 }());
+
+
 
 
 
