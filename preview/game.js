@@ -88,7 +88,7 @@
   function nearestMonster() {
     var best = null, d0 = Infinity; state.monsters.forEach(function (m) { var d = Math.abs(m.x - state.hero.x) + Math.abs(m.y - state.hero.y); if (d < d0) { d0 = d; best = m; } }); return best;
   }
-  function shoot(kind) { var m = nearestMonster(); if (m) state.projectiles.push({ x: state.hero.x, y: state.hero.y - 32, target: m, speed: kind === 'skill' ? 420 : 720, life: 3, kind: kind || 'basic', damage: kind === 'skill' && state.selectedSkill === 'spark' ? 2 : 1 }); }
+  function shoot(kind, target) { var m = target || nearestMonster(); if (m) state.projectiles.push({ x: state.hero.x, y: state.hero.y - 32, target: m, speed: kind === 'skill' ? 420 : 720, life: 3, kind: kind || 'basic', damage: kind === 'skill' && state.selectedSkill === 'spark' ? 2 : 1 }); }
   function update(dt) {
     state.elapsed += dt; state.particles.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 130 * dt; p.life -= dt; }); state.particles = state.particles.filter(function (p) { return p.life > 0; }); state.floats.forEach(function (f) { f.y -= 22 * dt; f.life -= dt; }); state.floats = state.floats.filter(function (f) { return f.life > 0; }); state.xpStars.forEach(function (s) { s.y -= 30 * dt; s.life -= dt; }); state.xpStars = state.xpStars.filter(function (s) { return s.life > 0; });
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
@@ -123,7 +123,7 @@
     ctx.fillStyle = 'rgba(50,37,77,.72)'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'left'; ctx.fillText('Lv.' + state.level + '  XP ' + state.xp + (isFinite(state.nextXp) ? ' / ' + state.nextXp : ''), 24, 34); ctx.fillText('状态：' + state.phase + '  技能：' + (state.selectedSkill || '龙卷风'), 24, 59); ctx.fillStyle = '#5b436c'; ctx.fillRect(24, 75, 210, 12); ctx.fillStyle = '#f28ca7'; ctx.fillRect(24, 75, 210 * state.hero.hp / state.hero.maxHp, 12);
   }
   function loop(now) { if (!state.last) state.last = now; var dt = Math.min(.05, (now - state.last) / 1000); state.last = now; update(dt); draw(); if (state.phase !== 'victory') requestAnimationFrame(loop); }
-  canvas.addEventListener('pointerdown', function (e) { var r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height; var hit = state.monsters.slice().reverse().find(function (m) { return Math.hypot(m.x - x, m.y - y) <= m.r + 28; }); if (hit) damageEnemy(hit, 1); });
+  canvas.addEventListener('pointerdown', function (e) { var r = canvas.getBoundingClientRect(), x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height; var hit = state.monsters.slice().reverse().find(function (m) { return Math.hypot(m.x - x, m.y - y) <= m.r + 28; }); if (hit) shoot('basic', hit); });
   if (startButton) startButton.addEventListener('click', startGame);
   if (downloadButton) downloadButton.addEventListener('click', function () { var a = document.createElement('a'); a.download = 'magic-castle-preview.png'; a.href = canvas.toDataURL('image/png'); a.click(); downloadButton.textContent = '已生成试玩图'; });
   document.querySelectorAll('[data-restart], #restartButton').forEach(function (el) { el.addEventListener('click', restart); });

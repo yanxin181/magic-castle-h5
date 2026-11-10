@@ -1,4 +1,4 @@
-import { Color, Component, Graphics, Node, Vec3, _decorator } from 'cc';
+import { Color, Component, Graphics, Node, Vec3, _decorator, tween } from 'cc';
 import { EnemyData, GameState, RECT } from './types';
 import { GameManager, GAME_EVENTS } from './GameManager';
 
@@ -84,6 +84,28 @@ export class BattleManager extends Component {
                 ? this.enemies.find((item) => item.data.id === target)
                 : this.enemies[0];
         if (!runtime) return;
+        this.fireProjectile(runtime, damage);
+    }
+
+    private fireProjectile(runtime: EnemyRuntime, damage: number): void {
+        const projectile = new Node('BasicProjectile');
+        (this.enemyRoot ?? this.node).addChild(projectile);
+        const graphics = projectile.addComponent(Graphics);
+        graphics.fillColor = new Color(255, 243, 168, 255);
+        graphics.circle(0, 0, 8);
+        graphics.fill();
+        projectile.setPosition(RECT.player.x + RECT.player.width / 2, RECT.player.y + RECT.player.height / 2);
+        const targetPosition = runtime.node.position.clone();
+        tween(projectile)
+            .to(0.28, { position: targetPosition })
+            .call(() => {
+                projectile.destroy();
+                if (this.enemies.includes(runtime)) this.applyDamage(runtime, damage);
+            })
+            .start();
+    }
+
+    private applyDamage(runtime: EnemyRuntime, damage: number): void {
         runtime.data.hp -= damage;
         if (runtime.data.hp > 0) return;
         this.removeRuntime(runtime);
