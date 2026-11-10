@@ -1,0 +1,16 @@
+# Keep only the three game project folders in Git
+*
+!.gitignore
+!cocos/
+!cocos/**
+!cocos-project/
+!cocos-project/**
+!preview/
+!preview/**
+
+# Local caches and editor/build output
+preview/__pycache__/
+cocos-project/library/
+cocos-project/temp/
+cocos-project/build/
+cocos-project/deploy/
