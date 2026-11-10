@@ -1,16 +1,22 @@
-import { Color, Component, Graphics, Node, Vec3, _decorator, tween } from 'cc';
-import { EnemyData, GameState, RECT } from './types';
+import { Color, Component, Graphics, Node, Sprite, SpriteFrame, UITransform, Vec3, _decorator, resources, tween } from 'cc';
+import { ENEMY_CHANNEL, EnemyData, GameState, RECT } from './types';
 import { GameManager, GAME_EVENTS } from './GameManager';
 
 const { ccclass, property } = _decorator;
 
-interface EnemyRuntime { data: EnemyData; node: Node; }
+interface EnemyRuntime {
+    data: EnemyData;
+    node: Node;
+    /** Stable lateral offset in the tapered channel, from -1 (left) to 1 (right). */
+    laneOffset: number;
+}
 
 @ccclass('BattleManager')
 export class BattleManager extends Component {
     @property(Node) enemyRoot: Node | null = null;
     @property(Node) player: Node | null = null;
     @property(GameManager) gameManager: GameManager | null = null;
+    @property(Sprite) battlefieldBackground: Sprite | null = null;
     @property({ tooltip: 'Seconds between regular enemy spawns.' }) spawnInterval = 2;
     @property({ tooltip: 'Seconds between normal attacks.' }) attackInterval = 0.72;
 
@@ -24,6 +30,7 @@ export class BattleManager extends Component {
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.parent?.getComponent(GameManager) ?? null;
         this.arenaGraphics = this.getComponent(Graphics) ?? this.node.addComponent(Graphics);
+        this.ensureBattlefieldBackground();
         this.drawPlaceholderArena();
         this.gameManager?.events.on(GAME_EVENTS.stateChanged, this.onStateChanged, this);
         this.gameManager?.events.on(GAME_EVENTS.restarted, this.resetBattle, this);
@@ -61,16 +68,23 @@ export class BattleManager extends Component {
             isBoss: false,
         };
         const node = this.createPlaceholderNode(enemyData.id, new Color(220, 90, 90, 255));
-        node.setPosition(RECT.arena.x + 60 + Math.random() * (RECT.arena.width - 120), RECT.arena.y + RECT.arena.height);
-        this.enemies.push({ data: enemyData, node });
+        const laneOffset = this.clampLane(data?.lane ?? (Math.random() * 2 - 1));
+        enemyData.lane = laneOffset;
+        const spawnPoint = this.channelPoint(ENEMY_CHANNEL.farY, laneOffset);
+        node.setPosition(spawnPoint.x, spawnPoint.y);
+        this.updateEnemyPerspective({ data: enemyData, node, laneOffset });
+        this.enemies.push({ data: enemyData, node, laneOffset });
         // this.attackClock = this.attackInterval;
         return enemyData;
     }
 
     moveEnemies(deltaTime: number): void {
         for (const runtime of [...this.enemies]) {
-            runtime.node.translate(new Vec3(0, -runtime.data.speed * deltaTime, 0));
-            if (runtime.node.position.y < RECT.arena.y - 40) {
+            const nextY = runtime.node.position.y - runtime.data.speed * deltaTime;
+            const nextPoint = this.channelPoint(nextY, runtime.laneOffset);
+            runtime.node.setPosition(nextPoint.x, nextPoint.y);
+            this.updateEnemyPerspective(runtime);
+            if (nextY < ENEMY_CHANNEL.nearY - 32) {
                 this.removeRuntime(runtime);
                 this.hitPlayer(runtime.data.damage);
             }
@@ -88,6 +102,7 @@ export class BattleManager extends Component {
     }
 
     private fireProjectile(runtime: EnemyRuntime, damage: number): void {
+        this.gameManager?.events.emit(GAME_EVENTS.attack, runtime.data);
         const projectile = new Node('BasicProjectile');
         (this.enemyRoot ?? this.node).addChild(projectile);
         const graphics = projectile.addComponent(Graphics);
@@ -119,10 +134,13 @@ export class BattleManager extends Component {
     createBoss(): EnemyData {
         this.enemies.forEach((item) => item.node.destroy());
         this.enemies = [];
-        const data: EnemyData = { id: 'boss', hp: 250, maxHp: 250, speed: 24, damage: 20, isBoss: true };
+        const data: EnemyData = { id: 'boss', hp: 250, maxHp: 250, speed: 24, damage: 20, isBoss: true, lane: 0 };
         const node = this.createPlaceholderNode(data.id, new Color(190, 70, 220, 255));
-        node.setPosition(RECT.arena.x + RECT.arena.width / 2, RECT.arena.y + RECT.arena.height - 120);
-        this.boss = { data, node };
+        const laneOffset = 0;
+        const spawnPoint = this.channelPoint(ENEMY_CHANNEL.farY - 12, laneOffset);
+        node.setPosition(spawnPoint.x, spawnPoint.y);
+        this.boss = { data, node, laneOffset };
+        this.updateEnemyPerspective(this.boss);
         this.enemies.push(this.boss);
         if (this.gameManager?.state !== GameState.Boss) this.gameManager?.beginBoss();
         return data;
@@ -164,18 +182,61 @@ export class BattleManager extends Component {
         graphics.fillColor = color;
         graphics.roundRect(-20, -20, 40, 40, 8);
         graphics.fill();
-        node.on(Node.EventType.TOUCH_END, () => this.hitEnemy(node), this);
-        node.on(Node.EventType.MOUSE_UP, () => this.hitEnemy(node), this);
         return node;
     }
+
+    /** Load the supplied castle battlefield behind all runtime enemies. */
+    private ensureBattlefieldBackground(): void {
+        const backgroundNode = this.battlefieldBackground?.node ?? new Node('BattlefieldBackground');
+        if (!this.battlefieldBackground) {
+            this.node.addChild(backgroundNode);
+            backgroundNode.setSiblingIndex(0);
+            backgroundNode.addComponent(UITransform);
+            this.battlefieldBackground = backgroundNode.addComponent(Sprite);
+        }
+        const transform = backgroundNode.getComponent(UITransform) ?? backgroundNode.addComponent(UITransform);
+        transform.setContentSize(RECT.screen.width, RECT.screen.height);
+        this.battlefieldBackground.sizeMode = Sprite.SizeMode.CUSTOM;
+        resources.load('battlefield-background/spriteFrame', SpriteFrame, (error, frame) => {
+            if (error || !frame || !this.battlefieldBackground?.isValid) return;
+            this.battlefieldBackground.spriteFrame = frame;
+            this.battlefieldBackground.sizeMode = Sprite.SizeMode.CUSTOM;
+            transform.setContentSize(RECT.screen.width, RECT.screen.height);
+        });
+    }
+
+    /** Return the interpolated wall bounds at a given y coordinate. */
+    private channelBounds(y: number): { left: number; right: number } {
+        const span = ENEMY_CHANNEL.farY - ENEMY_CHANNEL.nearY;
+        const depth = span <= 0 ? 1 : this.clamp01((ENEMY_CHANNEL.farY - y) / span);
+        return {
+            left: ENEMY_CHANNEL.farLeft + (ENEMY_CHANNEL.nearLeft - ENEMY_CHANNEL.farLeft) * depth,
+            right: ENEMY_CHANNEL.farRight + (ENEMY_CHANNEL.nearRight - ENEMY_CHANNEL.farRight) * depth,
+        };
+    }
+
+    private channelPoint(y: number, laneOffset: number): Vec3 {
+        const bounds = this.channelBounds(y);
+        const center = (bounds.left + bounds.right) / 2;
+        const halfWidth = (bounds.right - bounds.left) / 2;
+        const margin = Math.min(34, halfWidth * 0.18);
+        const usableHalfWidth = Math.max(0, halfWidth - margin);
+        return new Vec3(center + this.clampLane(laneOffset) * usableHalfWidth, y, 0);
+    }
+
+    private updateEnemyPerspective(runtime: EnemyRuntime): void {
+        const span = ENEMY_CHANNEL.farY - ENEMY_CHANNEL.nearY;
+        const depth = span <= 0 ? 1 : this.clamp01((ENEMY_CHANNEL.farY - runtime.node.position.y) / span);
+        const scale = 0.62 + depth * 0.48;
+        runtime.node.setScale(scale, scale, 1);
+    }
+
+    private clampLane(value: number): number { return Math.max(-0.82, Math.min(0.82, value)); }
+    private clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
     private drawPlaceholderArena(): void {
         if (!this.arenaGraphics) return;
         this.arenaGraphics.clear();
-        this.arenaGraphics.strokeColor = new Color(90, 110, 150, 180);
-        this.arenaGraphics.lineWidth = 2;
-        this.arenaGraphics.rect(RECT.arena.x, RECT.arena.y, RECT.arena.width, RECT.arena.height);
-        this.arenaGraphics.stroke();
     }
 }
 

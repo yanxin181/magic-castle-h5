@@ -11,6 +11,7 @@ export const GAME_EVENTS = {
     cardChosen: 'card-chosen',
     diceResolved: 'dice-resolved',
     bossStarted: 'boss-started',
+    attack: 'hero-attack',
     victory: 'victory',
     restarted: 'restarted',
 } as const;

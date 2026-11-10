@@ -19,6 +19,24 @@ export class UiManager extends Component {
 
     private startRoot: Node | null = null;
     private downloadButton: Button | null = null;
+    private characterSprite: Sprite | null = null;
+    private characterIdleFrame: SpriteFrame | null = null;
+    private characterAttackFrames: SpriteFrame[] = [];
+    private attackElapsed = -1;
+    private readonly attackFrameDuration = 0.1;
+
+    update(deltaTime: number): void {
+        if (this.attackElapsed < 0 || !this.characterSprite || this.characterAttackFrames.length === 0) return;
+        this.attackElapsed += deltaTime;
+        if (this.attackElapsed >= this.attackFrameDuration * this.characterAttackFrames.length) {
+            this.attackElapsed = -1;
+            if (this.characterIdleFrame) this.characterSprite.spriteFrame = this.characterIdleFrame;
+            return;
+        }
+        const frameIndex = Math.min(this.characterAttackFrames.length - 1, Math.floor(this.attackElapsed / this.attackFrameDuration));
+        const frame = this.characterAttackFrames[frameIndex];
+        if (frame) this.characterSprite.spriteFrame = frame;
+    }
 
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.parent?.getComponent(GameManager) ?? null;
@@ -30,6 +48,7 @@ export class UiManager extends Component {
         events.on(GAME_EVENTS.levelUp, this.showCards, this);
         events.on(GAME_EVENTS.diceResolved, this.showDiceResult, this);
         events.on(GAME_EVENTS.bossStarted, this.showBoss, this);
+        events.on(GAME_EVENTS.attack, this.playAttack, this);
         events.on(GAME_EVENTS.victory, this.showVictory, this);
         this.refreshHud();
         this.onStateChanged(this.gameManager.state);
@@ -43,6 +62,7 @@ export class UiManager extends Component {
         events.off(GAME_EVENTS.levelUp, this.showCards, this);
         events.off(GAME_EVENTS.diceResolved, this.showDiceResult, this);
         events.off(GAME_EVENTS.bossStarted, this.showBoss, this);
+        events.off(GAME_EVENTS.attack, this.playAttack, this);
         events.off(GAME_EVENTS.victory, this.showVictory, this);
     }
 
@@ -127,8 +147,22 @@ export class UiManager extends Component {
         const boardNode = new Node('CharacterBoard');
         this.node.addChild(boardNode);
         boardNode.setPosition(0, -120);
+        const boardTransform = boardNode.addComponent(UITransform);
+        boardTransform.setContentSize(188, 226);
         const sprite = boardNode.addComponent(Sprite);
-        resources.load('character-board/spriteFrame', SpriteFrame, (error, frame) => { if (!error && frame) sprite.spriteFrame = frame; });
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        this.characterSprite = sprite;
+        resources.load('hero-standing/spriteFrame', SpriteFrame, (error, frame) => {
+            if (error || !frame || !this.characterSprite?.isValid) return;
+            this.characterIdleFrame = frame;
+            this.characterSprite.spriteFrame = frame;
+        });
+        this.characterAttackFrames = new Array(6);
+        ['hero-staff-01', 'hero-staff-02', 'hero-staff-03', 'hero-staff-04', 'hero-staff-05', 'hero-staff-06'].forEach((assetName, index) => {
+            resources.load(`${assetName}/spriteFrame`, SpriteFrame, (error, frame) => {
+                if (!error && frame) this.characterAttackFrames[index] = frame;
+            });
+        });
     }
 
     private createLabel(name: string, text: string, position: Vec3, fontSize: number, parent: Node = this.node): Label {
@@ -188,6 +222,10 @@ export class UiManager extends Component {
     showDiceResult = (result: number): void => { if (this.diceLabel) this.diceLabel.string = `骰子：${result}`; };
     showBoss = (): void => { if (this.bossLabel) this.bossLabel.string = 'BOSS · 贪吃恶龙'; if (this.bossBar) this.bossBar.progress = 1; };
     showVictory = (): void => { if (this.victoryRoot) this.victoryRoot.active = true; };
+    playAttack = (): void => {
+        this.attackElapsed = 0;
+        if (this.characterSprite && this.characterAttackFrames[0]) this.characterSprite.spriteFrame = this.characterAttackFrames[0];
+    };
 
     private onStateChanged(state: GameState): void {
         if (this.startRoot) this.startRoot.active = state === GameState.Start;

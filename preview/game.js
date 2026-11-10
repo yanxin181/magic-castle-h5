@@ -10,32 +10,62 @@
   var cardPanel = document.getElementById('cardPanel'), cardGrid = document.getElementById('cardGrid');
   var diceResult = document.getElementById('diceResult'), victoryPanel = document.getElementById('victoryPanel');
   var downloadButton = document.getElementById('downloadButton'), thresholds = [30, 70, 120, 180];
+  var battlefieldImage = new Image(), battlefieldImageReady = false;
+  battlefieldImage.onload = function () { battlefieldImageReady = true; draw(); };
+  battlefieldImage.onerror = function () { battlefieldImageReady = false; };
+  battlefieldImage.src = 'battlefield-background.png';
   var heroImage = new Image(), heroImageReady = false;
-  heroImage.onload = function () { heroImageReady = true; }; heroImage.onerror = function () { heroImageReady = false; };
-  heroImage.src = 'character-board.png';
+  heroImage.onload = function () { heroImageReady = true; draw(); }; heroImage.onerror = function () { heroImageReady = false; };
+  heroImage.src = 'hero-standing.png';
+  var heroAttackFrames = ['hero-staff-01.png', 'hero-staff-02.png', 'hero-staff-03.png', 'hero-staff-04.png', 'hero-staff-05.png', 'hero-staff-06.png'].map(function (src) {
+    var image = new Image(); image.onload = function () { draw(); }; image.src = src; return image;
+  });
+  var heroAttackFrameDuration = .1;
+  var heroAttackDuration = heroAttackFrameDuration * heroAttackFrames.length;
   var state = {
     phase: 'start', level: 1, xp: 0, kills: 0, nextXp: thresholds[0], monsters: [], projectiles: [], particles: [],
     selectedSkill: 'tornado', unlockedSkills: ['tornado'], upgraded: false, bossSpawned: false, elapsed: 0, spawnClock: 0, attackClock: 0, skillClock: 0, last: 0,
-    hero: { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false }
+    hero: { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false, attackElapsed: -1 }
   };
+  var battlefieldPath = { farY: 82, nearY: 614, farLeft: 384, farRight: 896, nearLeft: 210, nearRight: 1070 };
+  function clamp01(value) { return Math.max(0, Math.min(1, value)); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function laneMetrics(t, offset) {
+    var depth = clamp01(t);
+    var left = lerp(battlefieldPath.farLeft, battlefieldPath.nearLeft, depth);
+    var right = lerp(battlefieldPath.farRight, battlefieldPath.nearRight, depth);
+    var center = (left + right) * .5;
+    return { t: depth, x: center + (offset || 0) * (right - left) * .42, y: lerp(battlefieldPath.farY, battlefieldPath.nearY, depth), scale: .42 + depth * .98 };
+  }
+  function updateMonsterPose(monster) {
+    var pose = laneMetrics(monster.t, monster.laneOffset);
+    monster.x = pose.x; monster.y = pose.y; monster.r = monster.baseR * pose.scale;
+  }
   function css(el, o) { if (!el) return; Object.keys(o).forEach(function (k) { el.style[k] = o[k]; }); }
   function hide(el) { css(el, { display: 'none' }); } function show(el, d) { css(el, { display: d || 'block' }); }
   function resetWorld() {
     state.phase = 'start'; state.level = 1; state.xp = 0; state.kills = 0; state.nextXp = thresholds[0];
     state.monsters = []; state.projectiles = []; state.particles = []; state.floats = []; state.xpStars = []; state.selectedSkill = null; state.upgraded = false; state.bossSpawned = false;
-    state.elapsed = 0; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; state.floats = []; state.xpStars = []; state.unlockedSkills = ['tornado']; state.selectedSkill = 'tornado'; state.hero = { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false };
+    state.elapsed = 0; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; state.floats = []; state.xpStars = []; state.unlockedSkills = ['tornado']; state.selectedSkill = 'tornado'; state.hero = { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false, attackElapsed: -1 };
     hide(cardPanel); hide(victoryPanel); show(startCard, 'block'); if (diceResult) diceResult.textContent = '';
     if (startButton) { show(startButton, 'inline-flex'); startButton.disabled = false; }
   }
   function startGame() { state.phase = 'battle'; state.last = performance.now(); hide(cardPanel); hide(victoryPanel); hide(startCard); requestAnimationFrame(loop); }
   function emit(x, y, color, n) { for (var i = 0; i < (n || 6); i++) state.particles.push({ x: x, y: y, vx: (Math.random() - .5) * 120, vy: -30 - Math.random() * 90, life: .55 + Math.random() * .35, color: color || '#fff' }); }
+  function triggerHeroAttack() { state.hero.attackElapsed = 0; }
+  function updateHeroAnimation(dt) { if (state.hero.attackElapsed < 0) return; state.hero.attackElapsed += dt; if (state.hero.attackElapsed >= heroAttackDuration) state.hero.attackElapsed = -1; }
   function spawnMonster(boss) {
-    var m = { id: Math.random().toString(36).slice(2), x: 95 + Math.random() * (W - 190), y: boss ? 72 : -38, r: boss ? 58 : 31, hp: boss ? 10 : 1, maxHp: boss ? 10 : 1, speed: boss ? 8 : 16 + Math.random() * 14, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
-    state.monsters.push(m);\n    // 普通攻击自动释放暂时注释，改为点击怪物触发。\n    // shoot('basic');\n    return m;
+    var m = { id: Math.random().toString(36).slice(2), t: boss ? .12 : .02, laneOffset: boss ? 0 : (Math.random() * 1.5 - .75), baseR: boss ? 42 : 22, x: 0, y: 0, r: 0, hp: boss ? 10 : 1, maxHp: boss ? 10 : 1, speed: boss ? .045 : .105 + Math.random() * .045, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
+    updateMonsterPose(m);
+    state.monsters.push(m);
+    // 普通攻击自动释放暂时注释，改为点击怪物触发。
+    // shoot('basic');
+    return m;
   }
   function damageEnemy(monsterOrId, amount) {
     var m = typeof monsterOrId === 'object' ? monsterOrId : state.monsters.find(function (x) { return x.id === monsterOrId; });
     if (!m || (state.phase !== 'battle' && state.phase !== 'boss')) return false;
+    triggerHeroAttack();
     var hitAmount = amount || 1; m.hp -= hitAmount; state.floats.push({ x: m.x, y: m.y - m.r - 12, text: '-' + hitAmount, life: .75 }); emit(m.x, m.y, m.boss ? '#ffb3c6' : '#fff3a8', 4);
     if (m.hp <= 0) {
       var i = state.monsters.indexOf(m); if (i >= 0) state.monsters.splice(i, 1);
@@ -85,36 +115,52 @@
   function nearestMonster() {
     var best = null, d0 = Infinity; state.monsters.forEach(function (m) { var d = Math.abs(m.x - state.hero.x) + Math.abs(m.y - state.hero.y); if (d < d0) { d0 = d; best = m; } }); return best;
   }
-  function shoot(kind) { var m = nearestMonster(); if (m) state.projectiles.push({ x: state.hero.x, y: state.hero.y - 32, target: m, speed: kind === 'skill' ? 420 : 720, life: 3, kind: kind || 'basic', damage: kind === 'skill' && state.selectedSkill === 'spark' ? 2 : 1 }); }
+  function shoot(kind) { var m = nearestMonster(); if (m) { triggerHeroAttack(); state.projectiles.push({ x: state.hero.x, y: state.hero.y - 32, target: m, speed: kind === 'skill' ? 420 : 720, life: 3, kind: kind || 'basic', damage: kind === 'skill' && state.selectedSkill === 'spark' ? 2 : 1 }); } }
   function update(dt) {
     state.elapsed += dt; state.particles.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 130 * dt; p.life -= dt; }); state.particles = state.particles.filter(function (p) { return p.life > 0; }); state.floats.forEach(function (f) { f.y -= 22 * dt; f.life -= dt; }); state.floats = state.floats.filter(function (f) { return f.life > 0; }); state.xpStars.forEach(function (s) { s.y -= 30 * dt; s.life -= dt; }); state.xpStars = state.xpStars.filter(function (s) { return s.life > 0; });
+    updateHeroAnimation(dt);
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
     state.spawnClock += dt; state.attackClock += dt; state.skillClock += dt;
     if (state.phase === 'battle' && state.spawnClock > Math.max(1.2, 2.5 - state.level * .2)) { state.spawnClock = 0; spawnMonster(false); }
-    // 普通攻击自动释放暂时注释，改为点击怪物触发。\n    // if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
+    // 普通攻击自动释放暂时注释，改为点击怪物触发。
+    // if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
     // 技能自动释放暂时注释，先单独验证主角普通攻击。
     // if (state.skillClock > (state.selectedSkill === 'wind' ? .38 : 1.1)) { state.skillClock = 0; shoot('skill'); }
-    state.monsters.forEach(function (m) { if (!m.boss) m.y += m.speed * dt; if (m.y > H - 160) { m.y = -40; state.hero.hp -= m.boss ? 14 : 5; if (state.hero.hp <= 0) state.hero.hp = state.hero.maxHp; } });
+    state.monsters.slice().forEach(function (m) { if (!m.boss) { m.t += m.speed * dt; updateMonsterPose(m); } if (m.t >= 1) { var index = state.monsters.indexOf(m); if (index >= 0) state.monsters.splice(index, 1); state.hero.hp -= m.boss ? 14 : 5; if (state.hero.hp <= 0) state.hero.hp = state.hero.maxHp; } });
     state.projectiles.forEach(function (p) {
       if (!p.target || state.monsters.indexOf(p.target) < 0) { p.life = -1; return; }
       var dx = p.target.x - p.x, dy = p.target.y - p.y, d = Math.hypot(dx, dy), step = p.speed * dt;
       if (d < step + p.target.r) { damageEnemy(p.target, p.damage || 1); p.life = -1; } else { p.x += dx / d * step; p.y += dy / d * step; p.life -= dt; }
     }); state.projectiles = state.projectiles.filter(function (p) { return p.life > 0; });
   }
-  function drawCloud(x, y, s) { ctx.fillStyle = 'rgba(255,255,255,.68)'; ctx.beginPath(); ctx.arc(x, y, 28 * s, 0, Math.PI * 2); ctx.arc(x + 32 * s, y - 12 * s, 38 * s, 0, Math.PI * 2); ctx.arc(x + 75 * s, y, 25 * s, 0, Math.PI * 2); ctx.fill(); }
+  function drawBackground() {
+    if (battlefieldImageReady) {
+      var scale = Math.max(W / battlefieldImage.width, H / battlefieldImage.height);
+      var sourceWidth = W / scale, sourceHeight = H / scale;
+      var sourceX = (battlefieldImage.width - sourceWidth) * .5;
+      var sourceY = (battlefieldImage.height - sourceHeight) * .58;
+      ctx.drawImage(battlefieldImage, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, W, H);
+      return;
+    }
+    var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#b7d9f4'); g.addColorStop(1, '#f7d8dc'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255, 236, 177, .32)'; ctx.beginPath(); ctx.moveTo(battlefieldPath.farLeft, battlefieldPath.farY); ctx.lineTo(battlefieldPath.farRight, battlefieldPath.farY); ctx.lineTo(battlefieldPath.nearRight, battlefieldPath.nearY); ctx.lineTo(battlefieldPath.nearLeft, battlefieldPath.nearY); ctx.closePath(); ctx.fill();
+  }
   function drawHero() {
-    var h = state.hero, scale = h.upgraded ? 1.12 : 1;
-    if (heroImageReady) { var src = h.upgraded ? { x: 548, y: 82, w: 638, h: 660 } : { x: 62, y: 112, w: 470, h: 602 }; ctx.drawImage(heroImage, src.x, src.y, src.w, src.h, h.x - 82 * scale, h.y - 118 * scale, 164 * scale, 208 * scale); return; }
+    var h = state.hero, scale = 1, image = heroImage;
+    if (h.attackElapsed >= 0 && heroAttackFrames.length) {
+      var frameIndex = Math.min(heroAttackFrames.length - 1, Math.floor(h.attackElapsed / heroAttackFrameDuration));
+      if (heroAttackFrames[frameIndex].complete) image = heroAttackFrames[frameIndex];
+    }
+    if (image.complete && image.naturalWidth) {
+      var maxWidth = 188 * scale, maxHeight = 226 * scale, ratio = image.naturalWidth / image.naturalHeight;
+      var drawWidth = Math.min(maxWidth, maxHeight * ratio), drawHeight = drawWidth / ratio;
+      ctx.drawImage(image, h.x - drawWidth / 2, h.y - drawHeight + 70, drawWidth, drawHeight); return;
+    }
     ctx.save(); ctx.translate(h.x, h.y); ctx.scale(scale, scale); ctx.fillStyle = h.upgraded ? '#8d6de3' : '#5f68b9'; ctx.beginPath(); ctx.moveTo(-34, 42); ctx.quadraticCurveTo(0, -2, 34, 42); ctx.fill(); ctx.fillStyle = '#ffd6b3'; ctx.beginPath(); ctx.arc(0, -12, 22, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#2e2b5f'; ctx.beginPath(); ctx.arc(0, -22, 23, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffe18a'; ctx.fillRect(-37, -2, 8, 34); ctx.fillStyle = '#fff4b0'; ctx.beginPath(); ctx.arc(-34, -5, 9, 0, Math.PI * 2); ctx.fill(); ctx.restore();
   }
   function draw() {
-    var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#b7d9f4'); g.addColorStop(1, '#f7d8dc'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    drawCloud(140, 115, 1.25); drawCloud(980, 145, .9); drawCloud(480, 82, .65);
-    ctx.fillStyle = '#d6b9d7'; ctx.fillRect(0, H - 118, W, 118); ctx.fillStyle = '#c99cc4'; ctx.fillRect(0, H - 118, W, 10);
-    ctx.fillStyle = '#9b7cad'; ctx.fillRect(82, H - 270, 126, 152); ctx.fillRect(W - 208, H - 270, 126, 152); ctx.fillStyle = '#e3c6e0'; ctx.fillRect(250, H - 230, 780, 112);
-    ctx.fillStyle = '#7e5e93'; ctx.beginPath(); ctx.moveTo(70, H - 270); ctx.lineTo(145, H - 340); ctx.lineTo(220, H - 270); ctx.fill(); ctx.beginPath(); ctx.moveTo(W - 220, H - 270); ctx.lineTo(W - 145, H - 340); ctx.lineTo(W - 70, H - 270); ctx.fill();
-    ctx.fillStyle = '#6e5686'; ctx.fillRect(565, H - 195, 150, 77); ctx.fillStyle = '#f4d18c'; ctx.beginPath(); ctx.arc(640, H - 157, 30, Math.PI, 0); ctx.fill();
-    state.monsters.forEach(function (m) { ctx.fillStyle = m.hue; ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(m.x - m.r * .28, m.y - 5, 6, 0, Math.PI * 2); ctx.arc(m.x + m.r * .28, m.y - 5, 6, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#54355f'; ctx.beginPath(); ctx.arc(m.x - m.r * .28, m.y - 5, 2, 0, Math.PI * 2); ctx.arc(m.x + m.r * .28, m.y - 5, 2, 0, Math.PI * 2); ctx.fill(); if (m.boss) { ctx.fillStyle = '#fff0a5'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('BOSS', m.x, m.y - m.r - 10); } if (m.hp < m.maxHp) { ctx.fillStyle = '#6d3e63'; ctx.fillRect(m.x - m.r, m.y - m.r - 7, m.r * 2, 5); ctx.fillStyle = '#f28ca7'; ctx.fillRect(m.x - m.r, m.y - m.r - 7, m.r * 2 * m.hp / m.maxHp, 5); } });
+    drawBackground();
+    state.monsters.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (m) { ctx.fillStyle = m.hue; ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(m.x - m.r * .28, m.y - m.r * .16, Math.max(4, m.r * .18), 0, Math.PI * 2); ctx.arc(m.x + m.r * .28, m.y - m.r * .16, Math.max(4, m.r * .18), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#54355f'; ctx.beginPath(); ctx.arc(m.x - m.r * .28, m.y - m.r * .16, Math.max(1.5, m.r * .06), 0, Math.PI * 2); ctx.arc(m.x + m.r * .28, m.y - m.r * .16, Math.max(1.5, m.r * .06), 0, Math.PI * 2); ctx.fill(); if (m.boss) { ctx.fillStyle = '#fff0a5'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('BOSS', m.x, m.y - m.r - 10); } if (m.hp < m.maxHp) { ctx.fillStyle = '#6d3e63'; ctx.fillRect(m.x - m.r, m.y - m.r - 7, m.r * 2, 5); ctx.fillStyle = '#f28ca7'; ctx.fillRect(m.x - m.r, m.y - m.r - 7, m.r * 2 * m.hp / m.maxHp, 5); } });
     state.projectiles.forEach(function (p) { ctx.fillStyle = p.kind === 'basic' ? '#fff3a8' : '#a8e6ff'; ctx.beginPath(); ctx.arc(p.x, p.y, 7, 0, Math.PI * 2); ctx.fill(); }); drawHero(); state.particles.forEach(function (p) { ctx.globalAlpha = Math.max(0, p.life * 1.5); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 5, 5); }); state.floats.forEach(function (f) { ctx.globalAlpha = Math.max(0, f.life); ctx.fillStyle = '#fff3a8'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y); }); state.xpStars.forEach(function (s) { ctx.globalAlpha = Math.max(0, s.life); ctx.fillStyle = '#ffe29a'; ctx.font = 'bold 18px sans-serif'; ctx.fillText('✦', s.x, s.y); }); ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(50,37,77,.72)'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'left'; ctx.fillText('Lv.' + state.level + '  XP ' + state.xp + (isFinite(state.nextXp) ? ' / ' + state.nextXp : ''), 24, 34); ctx.fillText('状态：' + state.phase + '  技能：' + (state.selectedSkill || '龙卷风'), 24, 59); ctx.fillStyle = '#5b436c'; ctx.fillRect(24, 75, 210, 12); ctx.fillStyle = '#f28ca7'; ctx.fillRect(24, 75, 210 * state.hero.hp / state.hero.maxHp, 12);
   }
