@@ -106,17 +106,70 @@ export class BattleManager extends Component {
         const projectile = new Node('BasicProjectile');
         (this.enemyRoot ?? this.node).addChild(projectile);
         const graphics = projectile.addComponent(Graphics);
-        graphics.fillColor = new Color(255, 243, 168, 255);
-        graphics.circle(0, 0, 8);
+        const projectileColor = runtime.data.isBoss
+            ? new Color(255, 173, 214, 255)
+            : new Color(255, 243, 168, 255);
+        graphics.fillColor = new Color(projectileColor.r, projectileColor.g, projectileColor.b, 54);
+        graphics.circle(0, 0, 15);
+        graphics.fill();
+        graphics.fillColor = projectileColor;
+        graphics.moveTo(-14, 0);
+        graphics.lineTo(0, 7);
+        graphics.lineTo(14, 0);
+        graphics.lineTo(0, -7);
+        graphics.close();
         graphics.fill();
         projectile.setPosition(RECT.player.x + RECT.player.width / 2, RECT.player.y + RECT.player.height / 2);
         const targetPosition = runtime.node.position.clone();
         tween(projectile)
             .to(0.28, { position: targetPosition })
             .call(() => {
+                this.createImpactEffect(targetPosition, projectileColor);
                 projectile.destroy();
                 if (this.enemies.includes(runtime)) this.applyDamage(runtime, damage);
             })
+            .start();
+    }
+
+    /** Draw a short-lived flash and shard burst where the projectile lands. */
+    private createImpactEffect(position: Vec3, color: Color): void {
+        const effectRoot = new Node('EnemyShatterEffect');
+        (this.enemyRoot ?? this.node).addChild(effectRoot);
+        effectRoot.setPosition(position);
+
+        const flash = effectRoot.addComponent(Graphics);
+        flash.fillColor = new Color(255, 255, 255, 210);
+        flash.circle(0, 0, 13);
+        flash.fill();
+        flash.strokeColor = new Color(color.r, color.g, color.b, 220);
+        flash.lineWidth = 4;
+        flash.circle(0, 0, 22);
+        flash.stroke();
+
+        const shardCount = 8;
+        for (let index = 0; index < shardCount; index += 1) {
+            const shard = new Node(`ShatterShard${index}`);
+            effectRoot.addChild(shard);
+            const shardGraphics = shard.addComponent(Graphics);
+            shardGraphics.fillColor = new Color(color.r, color.g, color.b, 235);
+            shardGraphics.moveTo(-5, -3);
+            shardGraphics.lineTo(7, 0);
+            shardGraphics.lineTo(-2, 4);
+            shardGraphics.close();
+            shardGraphics.fill();
+
+            const angle = (Math.PI * 2 * index) / shardCount;
+            const distance = 30 + (index % 3) * 12;
+            const destination = new Vec3(Math.cos(angle) * distance, Math.sin(angle) * distance, 0);
+            tween(shard)
+                .to(0.34, { position: destination, angle: (index % 2 ? 1 : -1) * 140 })
+                .start();
+        }
+
+        tween(effectRoot)
+            .to(0.12, { scale: new Vec3(1.3, 1.3, 1) })
+            .delay(0.28)
+            .call(() => effectRoot.destroy())
             .start();
     }
 
