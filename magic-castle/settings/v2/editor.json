@@ -1,0 +1,8 @@
+{
+  "general": {
+    "designResolution": { "width": 1280, "height": 720 },
+    "fitWidth": true,
+    "fitHeight": true,
+    "startScene": "db://assets/scenes/BattleScene.scene"
+  }
+}

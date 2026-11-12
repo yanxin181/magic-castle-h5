@@ -1,4 +1,4 @@
-# Keep only the three game project folders in Git
+# Keep only the game project folders in Git
 *
 !.gitignore
 !cocos/
@@ -7,6 +7,8 @@
 !cocos-project/**
 !preview/
 !preview/**
+!magic-castle/
+!magic-castle/**
 
 # Local caches and editor/build output
 preview/__pycache__/
@@ -14,3 +16,9 @@ cocos-project/library/
 cocos-project/temp/
 cocos-project/build/
 cocos-project/deploy/
+cocos-project/
+magic-castle/.creator/
+magic-castle/build/
+magic-castle/library/
+magic-castle/profiles/
+magic-castle/temp/
