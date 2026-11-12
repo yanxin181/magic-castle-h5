@@ -63,6 +63,7 @@ export class UiManager extends Component {
     private createBackground(): void {
         const background = this.node.getChildByName('Background') ?? new Node('Background');
         if (!background.parent) this.node.addChild(background);
+        background.layer = this.node.layer;
         background.setSiblingIndex(0);
 
         const transform = background.getComponent(UITransform) ?? background.addComponent(UITransform);
@@ -70,7 +71,9 @@ export class UiManager extends Component {
         const sprite = background.getComponent(Sprite) ?? background.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
 
-        resources.load('battlefield-background', Texture2D, (error, texture) => {
+        // PNG 在 Cocos 3.x 中会生成 ImageAsset 主资源和 Texture2D 子资源，
+        // 加载 Texture2D 时必须指向 /texture 子资源。
+        resources.load('battlefield-background/texture', Texture2D, (error, texture) => {
             if (error || !texture || !background.isValid) return;
             const frame = new SpriteFrame();
             frame.texture = texture;
@@ -81,6 +84,7 @@ export class UiManager extends Component {
     private createHero(): void {
         const hero = new Node('Player');
         this.node.addChild(hero);
+        hero.layer = this.node.layer;
         hero.setPosition(0, -255);
         hero.setSiblingIndex(2);
 
@@ -89,7 +93,8 @@ export class UiManager extends Component {
         const sprite = hero.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
 
-        resources.load('hero-standing', Texture2D, (error, texture) => {
+        // 同上：人物 PNG 的 Texture2D 路径是 hero-standing/texture。
+        resources.load('hero-standing/texture', Texture2D, (error, texture) => {
             if (error || !texture || !hero.isValid) return;
             const frame = new SpriteFrame();
             frame.texture = texture;
@@ -113,6 +118,7 @@ export class UiManager extends Component {
     private createLabel(name: string, text: string, position: Vec3, fontSize: number): Label {
         const node = new Node(name);
         this.node.addChild(node);
+        node.layer = this.node.layer;
         node.setPosition(position);
         node.addComponent(UITransform).setContentSize(430, 42);
 
@@ -127,6 +133,7 @@ export class UiManager extends Component {
     private createBar(name: string, position: Vec3, width: number, height: number, color: Color): Node {
         const root = new Node(name);
         this.node.addChild(root);
+        root.layer = this.node.layer;
         root.setPosition(position);
         root.addComponent(UITransform).setContentSize(width, height);
 
@@ -137,6 +144,7 @@ export class UiManager extends Component {
 
         const fill = new Node('Fill');
         root.addChild(fill);
+        fill.layer = this.node.layer;
         fill.addComponent(UITransform).setContentSize(width, height);
         const fillGraphics = fill.addComponent(Graphics);
         fillGraphics.fillColor = color;

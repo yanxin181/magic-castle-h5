@@ -126,7 +126,7 @@ export class BattleManager extends Component {
             .call(() => {
                 this.createImpactEffect(targetPosition, projectileColor);
                 projectile.destroy();
-                if (this.enemies.includes(runtime)) this.applyDamage(runtime, damage);
+                if (this.enemies.indexOf(runtime) >= 0) this.applyDamage(runtime, damage);
             })
             .start();
     }
@@ -292,12 +292,4 @@ export class BattleManager extends Component {
         this.arenaGraphics.clear();
     }
 }
-
-
-
-
-
-
-
-
 

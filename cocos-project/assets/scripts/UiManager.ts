@@ -41,8 +41,9 @@ export class UiManager extends Component {
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.parent?.getComponent(GameManager) ?? null;
         this.ensureRuntimeUi();
-        const events = this.gameManager?.events;
-        if (!events) return;
+        const manager = this.gameManager;
+        const events = manager?.events;
+        if (!manager || !events) return;
         events.on(GAME_EVENTS.experienceChanged, this.refreshHud, this);
         events.on(GAME_EVENTS.stateChanged, this.onStateChanged, this);
         events.on(GAME_EVENTS.levelUp, this.showCards, this);
@@ -51,12 +52,13 @@ export class UiManager extends Component {
         events.on(GAME_EVENTS.attack, this.playAttack, this);
         events.on(GAME_EVENTS.victory, this.showVictory, this);
         this.refreshHud();
-        this.onStateChanged(this.gameManager.state);
+        this.onStateChanged(manager.state);
     }
 
     onDestroy(): void {
-        const events = this.gameManager?.events;
-        if (!events) return;
+        const manager = this.gameManager;
+        const events = manager?.events;
+        if (!manager || !events) return;
         events.off(GAME_EVENTS.experienceChanged, this.refreshHud, this);
         events.off(GAME_EVENTS.stateChanged, this.onStateChanged, this);
         events.off(GAME_EVENTS.levelUp, this.showCards, this);
