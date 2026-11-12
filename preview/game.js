@@ -10,10 +10,21 @@
   var cardPanel = document.getElementById('cardPanel'), cardGrid = document.getElementById('cardGrid');
   var diceResult = document.getElementById('diceResult'), victoryPanel = document.getElementById('victoryPanel');
   var downloadButton = document.getElementById('downloadButton'), thresholds = [30, 70, 120, 180];
+  var monsterBalance = {
+    normalHp: 3,
+    bossHp: 30,
+    spawnInterval: function (level) { return Math.max(1.1, 1.3 - Math.max(0, level - 1) * .05); }
+  };
   var battlefieldImage = new Image(), battlefieldImageReady = false;
   battlefieldImage.onload = function () { battlefieldImageReady = true; draw(); };
   battlefieldImage.onerror = function () { battlefieldImageReady = false; };
   battlefieldImage.src = 'battlefield-background.png';
+  var battleMusic = new Audio('battle-music.mp3'), battleMusicAlt = new Audio('battle-music.mp3');
+  var musicTracks = [battleMusic, battleMusicAlt], musicGains = [], musicContext = null, musicActive = 0, musicCrossfading = false, musicStarted = false;
+  var musicVolume = .26, musicCrossfadeSeconds = .8;
+  musicTracks.forEach(function (track) { track.preload = 'auto'; track.loop = false; track.volume = musicVolume; });
+  var hitSfx = new Audio('hit-sfx.mp3'), cardClickSfx = new Audio('card-click-sfx.mp3'), levelUpSfx = new Audio('level-up-sfx.mp3');
+  [hitSfx, cardClickSfx, levelUpSfx].forEach(function (sound) { sound.preload = 'auto'; sound.volume = .48; });
   var heroImage = new Image(), heroImageReady = false;
   heroImage.onload = function () { heroImageReady = true; draw(); }; heroImage.onerror = function () { heroImageReady = false; };
   heroImage.src = 'hero-standing.png';
@@ -43,17 +54,52 @@
   }
   function css(el, o) { if (!el) return; Object.keys(o).forEach(function (k) { el.style[k] = o[k]; }); }
   function hide(el) { css(el, { display: 'none' }); } function show(el, d) { css(el, { display: d || 'block' }); }
+  function setupMusicCrossfade() {
+    var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) { battleMusic.loop = true; battleMusic.volume = musicVolume; return; }
+    try {
+      musicContext = new AudioContextCtor();
+      musicTracks.forEach(function (track, index) {
+        var source = musicContext.createMediaElementSource(track), gain = musicContext.createGain();
+        gain.gain.value = index === 0 ? musicVolume : 0;
+        source.connect(gain); gain.connect(musicContext.destination); musicGains[index] = gain;
+        track.addEventListener('timeupdate', function () {
+          if (index !== musicActive || musicCrossfading || !track.duration) return;
+          if (track.currentTime >= track.duration - musicCrossfadeSeconds) crossfadeMusic();
+        });
+      });
+    } catch (error) { musicContext = null; musicGains = []; battleMusic.loop = true; battleMusic.volume = musicVolume; }
+  }
+  function crossfadeMusic() {
+    if (!musicContext || musicCrossfading) return;
+    var currentIndex = musicActive, nextIndex = currentIndex === 0 ? 1 : 0, current = musicTracks[currentIndex], next = musicTracks[nextIndex], now = musicContext.currentTime;
+    musicCrossfading = true; next.currentTime = 0; musicGains[nextIndex].gain.cancelScheduledValues(now); musicGains[nextIndex].gain.setValueAtTime(0, now); musicGains[nextIndex].gain.linearRampToValueAtTime(musicVolume, now + musicCrossfadeSeconds); musicGains[currentIndex].gain.cancelScheduledValues(now); musicGains[currentIndex].gain.setValueAtTime(musicVolume, now); musicGains[currentIndex].gain.linearRampToValueAtTime(0, now + musicCrossfadeSeconds);
+    var playback = next.play(); if (playback && playback.catch) playback.catch(function () {});
+    setTimeout(function () { current.pause(); current.currentTime = 0; musicActive = nextIndex; musicCrossfading = false; }, musicCrossfadeSeconds * 1000);
+  }
+  function startBattleMusic() {
+    if (!musicContext) setupMusicCrossfade();
+    if (musicStarted && !musicTracks[musicActive].paused) { if (musicContext && musicContext.state === 'suspended') { var resumed = musicContext.resume(); if (resumed && resumed.catch) resumed.catch(function () {}); } return; }
+    musicStarted = true; musicActive = 0; musicTracks[0].currentTime = 0; if (!musicContext) musicTracks[0].loop = true;
+    if (musicContext) { musicGains[0].gain.value = musicVolume; musicGains[1].gain.value = 0; var resumed = musicContext.resume(); if (resumed && resumed.catch) resumed.catch(function () {}); }
+    var playback = musicTracks[0].play(); if (playback && playback.catch) playback.catch(function () { musicStarted = false; });
+  }
+  function stopBattleMusic() { musicTracks.forEach(function (track) { track.pause(); track.currentTime = 0; }); musicActive = 0; musicCrossfading = false; musicStarted = false; if (musicGains[0]) musicGains[0].gain.value = musicVolume; if (musicGains[1]) musicGains[1].gain.value = 0; }
+  function playSfx(sound) { sound.currentTime = 0; var playback = sound.play(); if (playback && playback.catch) playback.catch(function () {}); }
+  function recoverMusicFromGesture() { if (musicTracks[musicActive].paused) musicStarted = false; startBattleMusic(); }
   function resetWorld() {
+    stopBattleMusic();
     state.phase = 'start'; state.level = 1; state.xp = 0; state.kills = 0; state.nextXp = thresholds[0];
     state.monsters = []; state.projectiles = []; state.particles = []; state.impacts = []; state.floats = []; state.xpStars = []; state.selectedSkill = null; state.upgraded = false; state.bossSpawned = false;
     state.elapsed = 0; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; state.floats = []; state.xpStars = []; state.unlockedSkills = ['tornado']; state.selectedSkill = 'tornado'; state.hero = { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false, attackElapsed: -1 };
     hide(cardPanel); hide(victoryPanel); show(startCard, 'block'); if (diceResult) diceResult.textContent = '';
     if (startButton) { show(startButton, 'inline-flex'); startButton.disabled = false; }
   }
-  function startGame() { state.phase = 'battle'; state.last = performance.now(); hide(cardPanel); hide(victoryPanel); hide(startCard); requestAnimationFrame(loop); }
+  function startGame() { state.phase = 'battle'; state.last = performance.now(); hide(cardPanel); hide(victoryPanel); hide(startCard); startBattleMusic(); requestAnimationFrame(loop); }
   function emit(x, y, color, n) { for (var i = 0; i < (n || 6); i++) state.particles.push({ x: x, y: y, vx: (Math.random() - .5) * 120, vy: -30 - Math.random() * 90, life: .55 + Math.random() * .35, color: color || '#fff' }); }
   function emitShatter(x, y, color, radius) {
     var count = 18, burstRadius = radius || 24;
+    playSfx(hitSfx);
     state.impacts.push({ x: x, y: y, life: .28, maxLife: .28, radius: burstRadius, color: color || '#ffe29a' });
     for (var i = 0; i < count; i++) {
       var angle = Math.random() * Math.PI * 2, speed = 90 + Math.random() * 210;
@@ -63,7 +109,8 @@
   function triggerHeroAttack() { state.hero.attackElapsed = 0; }
   function updateHeroAnimation(dt) { if (state.hero.attackElapsed < 0) return; state.hero.attackElapsed += dt; if (state.hero.attackElapsed >= heroAttackDuration) state.hero.attackElapsed = -1; }
   function spawnMonster(boss) {
-    var m = { id: Math.random().toString(36).slice(2), t: boss ? .12 : .02, laneOffset: boss ? 0 : (Math.random() * 1.5 - .75), baseR: boss ? 42 : 22, x: 0, y: 0, r: 0, hp: boss ? 10 : 1, maxHp: boss ? 10 : 1, speed: boss ? .045 : .105 + Math.random() * .045, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
+    var hp = boss ? monsterBalance.bossHp : monsterBalance.normalHp;
+    var m = { id: Math.random().toString(36).slice(2), t: boss ? .12 : .02, laneOffset: boss ? 0 : (Math.random() * 1.5 - .75), baseR: boss ? 42 : 22, x: 0, y: 0, r: 0, hp: hp, maxHp: hp, speed: boss ? .045 : .105 + Math.random() * .045, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
     updateMonsterPose(m);
     state.monsters.push(m);
     // 普通攻击自动释放暂时注释，改为点击怪物触发。
@@ -85,7 +132,7 @@
   function checkLevel() {
     if (state.level >= 5 || state.phase !== 'battle') return;
     var target = thresholds[state.level - 1];
-    if (state.xp >= target) { state.level++; state.nextXp = thresholds[state.level - 1] || Infinity; state.phase = 'levelUp'; showCards(state.level); }
+    if (state.xp >= target) { state.level++; state.nextXp = thresholds[state.level - 1] || Infinity; state.phase = 'levelUp'; playSfx(levelUpSfx); showCards(state.level); }
   }
   var cardPool = [
     { title: '星屑护盾', text: '受到伤害降低，护盾会闪烁。', skill: 'shield' },
@@ -99,11 +146,11 @@
     var cards = (level === 3 || level === 5) ? cardPool.slice(0, 2) : cardPool.slice(0, 3);
     cards.forEach(function (card) {
       var b = document.createElement('button'); b.className = 'skill-card'; b.innerHTML = '<strong>' + card.title + '</strong><span>' + card.text + '</span>';
-      b.addEventListener('click', function () { chooseCard(card); }); cardGrid.appendChild(b);
+      b.addEventListener('click', function () { playSfx(cardClickSfx); chooseCard(card); }); cardGrid.appendChild(b);
     });
     if (level === 3 || level === 5) {
       var dice = document.createElement('button'); dice.className = 'skill-card dice-card'; dice.innerHTML = '<strong>🎲 命运骰子</strong><span>掷骰解锁一个随机技能</span>';
-      dice.addEventListener('click', rollDice); cardGrid.appendChild(dice);
+      dice.addEventListener('click', function () { playSfx(cardClickSfx); rollDice(); }); cardGrid.appendChild(dice);
     }
   }
   function chooseCard(card) { state.selectedSkill = card.skill; if (state.unlockedSkills.indexOf(card.skill) < 0) state.unlockedSkills.push(card.skill); card.remaining = Math.max(0, card.remaining - 1); hide(cardPanel); if (state.level === 4 && !state.upgraded) showEvolution(); else resumeBattle(); }
@@ -115,7 +162,7 @@
   function showEvolution() {
     state.phase = 'evolve'; if (!cardGrid || !cardPanel) return resumeBattle(); cardGrid.innerHTML = '';
     var b = document.createElement('button'); b.className = 'skill-card evolution-card'; b.innerHTML = '<strong>✨ 进化：星辉守卫</strong><span>换上升级形态，解锁更强的攻击。</span>';
-    b.addEventListener('click', function () { state.upgraded = true; state.hero.upgraded = true; hide(cardPanel); resumeBattle(); }); cardGrid.appendChild(b); show(cardPanel, 'flex');
+    b.addEventListener('click', function () { playSfx(cardClickSfx); playSfx(levelUpSfx); state.upgraded = true; state.hero.upgraded = true; hide(cardPanel); resumeBattle(); }); cardGrid.appendChild(b); show(cardPanel, 'flex');
   }
   function resumeBattle() { state.phase = 'battle'; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; if (state.level >= 5 && !state.bossSpawned) { state.phase = 'boss'; state.bossSpawned = true; spawnMonster(true); } }
   function win() { state.phase = 'victory'; hide(startCard); hide(cardPanel); show(victoryPanel, 'flex'); }
@@ -135,7 +182,7 @@
     updateHeroAnimation(dt);
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
     state.spawnClock += dt; state.attackClock += dt; state.skillClock += dt;
-    if (state.phase === 'battle' && state.spawnClock > Math.max(1.2, 2.5 - state.level * .2)) { state.spawnClock = 0; spawnMonster(false); }
+    if (state.phase === 'battle' && state.spawnClock > monsterBalance.spawnInterval(state.level)) { state.spawnClock = 0; spawnMonster(false); }
     // 普通攻击自动释放暂时注释，改为点击怪物触发。
     // if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
     // 技能自动释放暂时注释，先单独验证主角普通攻击。
@@ -161,14 +208,15 @@
   }
   function drawHero() {
     var h = state.hero, scale = 1, image = heroImage;
-    if (h.attackElapsed >= 0 && heroAttackFrames.length) {
+    if (h.attackElapsed >= 0 && Number.isFinite(h.attackElapsed) && heroAttackFrames.length) {
       var frameIndex = Math.min(heroAttackFrames.length - 1, Math.floor(h.attackElapsed / heroAttackFrameDuration));
       if (heroAttackFrames[frameIndex].complete) image = heroAttackFrames[frameIndex];
     }
     if (image.complete && image.naturalWidth) {
       var maxWidth = 188 * scale, maxHeight = 226 * scale, ratio = image.naturalWidth / image.naturalHeight;
-      var drawWidth = Math.min(maxWidth, maxHeight * ratio), drawHeight = drawWidth / ratio;
-      ctx.drawImage(image, h.x - drawWidth / 2, h.y - drawHeight + 70, drawWidth, drawHeight); return;
+      var drawWidth = Math.round(Math.min(maxWidth, maxHeight * ratio)), drawHeight = Math.round(drawWidth / ratio);
+      var drawX = Math.round(h.x - drawWidth / 2), drawY = Math.round(h.y - drawHeight + 70);
+      ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight); return;
     }
     ctx.save(); ctx.translate(h.x, h.y); ctx.scale(scale, scale); ctx.fillStyle = h.upgraded ? '#8d6de3' : '#5f68b9'; ctx.beginPath(); ctx.moveTo(-34, 42); ctx.quadraticCurveTo(0, -2, 34, 42); ctx.fill(); ctx.fillStyle = '#ffd6b3'; ctx.beginPath(); ctx.arc(0, -12, 22, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#2e2b5f'; ctx.beginPath(); ctx.arc(0, -22, 23, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffe18a'; ctx.fillRect(-37, -2, 8, 34); ctx.fillStyle = '#fff4b0'; ctx.beginPath(); ctx.arc(-34, -5, 9, 0, Math.PI * 2); ctx.fill(); ctx.restore();
   }
@@ -225,9 +273,11 @@
   if (startButton) startButton.addEventListener('click', startGame);
   if (downloadButton) downloadButton.addEventListener('click', function () { var a = document.createElement('a'); a.download = 'magic-castle-preview.png'; a.href = canvas.toDataURL('image/png'); a.click(); downloadButton.textContent = '已生成试玩图'; });
   document.querySelectorAll('[data-restart], #restartButton').forEach(function (el) { el.addEventListener('click', restart); });
-  resetWorld(); draw();
+  resetWorld(); draw(); startBattleMusic();
+  document.addEventListener('pointerdown', recoverMusicFromGesture, { passive: true });
+  document.addEventListener('keydown', recoverMusicFromGesture);
   window.__magicCastleDebug = {
-    getState: function () { return { phase: state.phase, level: state.level, xp: state.xp, kills: state.kills, monsterCount: state.monsters.length, upgraded: state.upgraded, selectedSkill: state.selectedSkill, unlockedSkills: state.unlockedSkills.slice(), bossSpawned: state.bossSpawned }; },
+    getState: function () { var monster = state.monsters[0]; return { phase: state.phase, level: state.level, xp: state.xp, kills: state.kills, monsterCount: state.monsters.length, monsterHp: monster ? monster.hp : null, monsterMaxHp: monster ? monster.maxHp : null, upgraded: state.upgraded, selectedSkill: state.selectedSkill, unlockedSkills: state.unlockedSkills.slice(), bossSpawned: state.bossSpawned }; },
     start: startGame,
     damageEnemy: damageEnemy,
     forceLevel: function (level) { state.level = Math.max(1, Math.min(5, level)); state.nextXp = thresholds[state.level - 1] || Infinity; if (state.level >= 5) { state.phase = 'boss'; if (!state.bossSpawned) { state.bossSpawned = true; spawnMonster(true); } } else if (state.level > 1) { state.phase = 'levelUp'; showCards(state.level); } },
