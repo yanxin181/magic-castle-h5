@@ -1,238 +1,271 @@
-import {
-    Camera,
-    Color,
-    Component,
-    EventMouse,
-    EventTouch,
-    Graphics,
-    input,
-    Input,
-    Layers,
-    Node,
-    UITransform,
-    Vec3,
-    _decorator,
-    tween,
-} from 'cc';
-import { GameManager, GAME_EVENTS } from './GameManager';
+import { Camera, Color, Component, Graphics, Label, Layers, Node, Sprite, SpriteFrame, Texture2D, UITransform, Vec3, _decorator, resources, tween } from 'cc';
+import { GAME_EVENTS, GameManager } from './GameManager';
+import { GameState } from './types';
 
 const { ccclass, property } = _decorator;
 
 interface EnemyRuntime {
     node: Node;
     hp: number;
+    maxHp: number;
     speed: number;
     damage: number;
     lane: number;
-    lastShotAt: number;
-    onHit: () => void;
+    isBoss: boolean;
+    lastAttackAt: number;
+    slowUntil: number;
+    slowMultiplier: number;
+    tornadoAge: number;
+    healthFill: Node;
 }
 
 @ccclass('BattleManager')
 export class BattleManager extends Component {
-    @property(Node)
-    enemyRoot: Node | null = null;
+    @property(Node) enemyRoot: Node | null = null;
+    @property(Node) player: Node | null = null;
+    @property(GameManager) gameManager: GameManager | null = null;
+    @property({ tooltip: '一级刷怪间隔（秒）' }) spawnInterval = 0.9;
+    @property({ tooltip: '普通怪生命值' }) normalEnemyHp = 30;
+    @property({ tooltip: 'BOSS 生命值' }) bossHp = 240;
 
-    @property(Node)
-    player: Node | null = null;
-
-    @property(GameManager)
-    gameManager: GameManager | null = null;
-
-    @property({ tooltip: '刷怪间隔（秒）' })
-    spawnInterval = 1.4;
-
+    private spawnClock = 0;
+    private attackCooldown = 0;
+    private skillClock = 0;
     private elapsed = 0;
     private serial = 0;
+    private waveStarted = false;
+    private tornado: Node | null = null;
+    private tornadoAge = 0;
+    private lastSkillStatus = '';
     private readonly enemies: EnemyRuntime[] = [];
+    private readonly tornadoFrames: SpriteFrame[] = [];
     private readonly topY = 320;
     private readonly castleY = -245;
-    // 蓝线标出的道路是一个向城堡方向逐渐变宽的梯形区域。
     private readonly farHalfWidth = 285;
     private readonly nearHalfWidth = 500;
     private readonly farScale = 0.45;
     private readonly nearScale = 1.35;
+    private readonly tornadoCooldown = 7;
+    private readonly tornadoDuration = 4;
+    private readonly tornadoRadius = 150;
 
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.getComponent(GameManager);
-
-        // 2D UI 的点击检测需要正交相机；也修正编辑器尚未刷新场景缓存的预览。
         const camera = this.node.parent?.getChildByName('Camera')?.getComponent(Camera);
         if (camera) camera.projection = Camera.ProjectionType.ORTHO;
-
         if (!this.enemyRoot) {
             this.enemyRoot = new Node('Enemies');
             this.node.addChild(this.enemyRoot);
         }
         this.node.layer = Layers.Enum.UI_2D;
         this.enemyRoot.layer = this.node.layer;
-
-        this.gameManager?.events.on(GAME_EVENTS.gameOver, this.stopBattle, this);
-    }
-
-    onEnable(): void {
-        input.on(Input.EventType.MOUSE_DOWN, this.onPointerDown, this);
-        input.on(Input.EventType.TOUCH_START, this.onPointerDown, this);
-    }
-
-    onDisable(): void {
-        input.off(Input.EventType.MOUSE_DOWN, this.onPointerDown, this);
-        input.off(Input.EventType.TOUCH_START, this.onPointerDown, this);
+        this.gameManager?.events.on(GAME_EVENTS.phaseChanged, this.onPhaseChanged, this);
+        this.loadTornadoFrames();
     }
 
     start(): void {
-        // 开场就形成一波敌人，让战斗更有压力。
-        this.spawnEnemy(-0.35, 0);
-        this.spawnEnemy(0.25, 0.65);
-        this.spawnEnemy(-0.68, 0.25);
-        this.spawnEnemy(0.62, 0.95);
+        this.onPhaseChanged(this.gameManager?.phase ?? GameState.Start);
     }
 
     update(dt: number): void {
-        if (this.gameManager?.isGameOver) return;
-
+        const manager = this.gameManager;
+        if (!manager?.isBattleActive) return;
         this.elapsed += dt;
-        if (this.elapsed >= this.spawnInterval) {
-            this.elapsed = 0;
-            this.spawnEnemy(Math.random() * 1.4 - 0.7, 0);
+        this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+        this.skillClock += dt;
+        this.updateTornado(dt);
+        this.notifySkillStatus();
+        if (manager.phase === GameState.Battle) {
+            this.spawnClock += dt;
+            if (this.spawnClock >= this.getSpawnInterval(manager.level)) {
+                this.spawnClock = 0;
+                this.spawnEnemy(Math.random() * 1.5 - 0.75, 0, false);
+            }
         }
-
-        for (const enemy of [...this.enemies]) {
-            this.moveEnemy(enemy, dt);
-        }
+        for (const enemy of [...this.enemies]) this.moveEnemy(enemy, dt);
     }
 
     onDestroy(): void {
-        this.gameManager?.events.off(GAME_EVENTS.gameOver, this.stopBattle, this);
-        for (const enemy of this.enemies) {
-            this.unbindEnemyInput(enemy.node, enemy.onHit);
-            enemy.node.destroy();
-        }
-        this.enemies.length = 0;
+        this.gameManager?.events.off(GAME_EVENTS.phaseChanged, this.onPhaseChanged, this);
+        this.clearEnemies();
+        this.destroyTornado();
     }
 
-    private spawnEnemy(lane: number, extraDelay: number): void {
-        if (!this.enemyRoot) return;
+    private onPhaseChanged(phase: GameState): void {
+        if (phase === GameState.Start) {
+            this.clearEnemies();
+            this.destroyTornado();
+            this.waveStarted = false;
+            this.spawnClock = 0;
+            this.attackCooldown = 0;
+            this.skillClock = 0;
+            this.notifySkillStatus(true);
+            return;
+        }
+        if (phase === GameState.Battle && !this.waveStarted) {
+            this.waveStarted = true;
+            this.spawnEnemy(-0.72, 0.1, false);
+            this.spawnEnemy(-0.28, 0.45, false);
+            this.spawnEnemy(0.24, 0.15, false);
+            this.spawnEnemy(0.68, 0.75, false);
+        }
+        if (phase === GameState.Boss && !this.gameManager?.bossSpawned) {
+            this.spawnEnemy(0, 0.1, true);
+            this.gameManager?.markBossSpawned();
+        }
+        this.notifySkillStatus(true);
+    }
 
-        const enemy = new Node(`Enemy-${++this.serial}`);
+    private getSpawnInterval(level: number): number {
+        return Math.max(0.55, this.spawnInterval - Math.max(0, level - 1) * 0.07);
+    }
+
+    private spawnEnemy(lane: number, extraDelay: number, isBoss: boolean): void {
+        if (!this.enemyRoot) return;
+        const enemy = new Node(`${isBoss ? 'Boss' : 'Enemy'}-${++this.serial}`);
         this.enemyRoot.addChild(enemy);
         enemy.layer = this.node.layer;
-
-        const transform = enemy.addComponent(UITransform);
-        transform.setContentSize(64, 64);
-
-        const graphics = enemy.addComponent(Graphics);
-        graphics.fillColor = new Color(93, 124, 219, 255);
-        graphics.circle(0, 0, 28);
-        graphics.fill();
-        graphics.fillColor = new Color(255, 255, 255, 255);
-        graphics.circle(-9, 5, 7);
-        graphics.circle(9, 5, 7);
-        graphics.fill();
-        graphics.fillColor = new Color(54, 45, 105, 255);
-        graphics.circle(-9, 5, 3);
-        graphics.circle(9, 5, 3);
-        graphics.fill();
-
-        let runtime: EnemyRuntime;
-        runtime = {
+        enemy.addComponent(UITransform).setContentSize(isBoss ? 104 : 64, isBoss ? 104 : 64);
+        this.drawEnemy(enemy, isBoss);
+        const healthFill = this.createHealthBar(enemy, isBoss);
+        if (isBoss) this.createBossLabel(enemy);
+        const runtime: EnemyRuntime = {
             node: enemy,
-            // 每个怪物需要命中三次才会被消灭。
-            hp: 30,
-            speed: 58 + Math.random() * 18,
-            damage: 5,
-            lane: Math.max(-0.85, Math.min(0.85, lane)),
-            lastShotAt: -Infinity,
-            onHit: () => {
-                // 触摸和鼠标事件可能在同一次点击中同时到达，只发射一颗子弹。
-                const now = Date.now();
-                if (now - runtime.lastShotAt < 100) return;
-                runtime.lastShotAt = now;
-                this.shootAtEnemy(enemy);
-            },
+            hp: isBoss ? this.bossHp : this.normalEnemyHp,
+            maxHp: isBoss ? this.bossHp : this.normalEnemyHp,
+            speed: isBoss ? 33 : 58 + Math.random() * 18,
+            damage: isBoss ? 14 : 5,
+            lane: isBoss ? 0 : Math.max(-0.85, Math.min(0.85, lane)),
+            isBoss,
+            lastAttackAt: -Infinity,
+            slowUntil: 0,
+            slowMultiplier: 1,
+            tornadoAge: 0,
+            healthFill,
         };
-
         const spawnY = this.topY + extraDelay * 55;
         enemy.setPosition(this.laneToX(runtime.lane, spawnY), spawnY);
         this.updateEnemyDepth(enemy, spawnY);
-        this.bindEnemyInput(enemy, runtime.onHit);
+        enemy.on(Node.EventType.TOUCH_START, () => this.launchBasicAttack(runtime), this);
+        enemy.on(Node.EventType.MOUSE_DOWN, () => this.launchBasicAttack(runtime), this);
         this.enemies.push(runtime);
     }
 
+    private drawEnemy(enemy: Node, isBoss: boolean): void {
+        const graphics = enemy.addComponent(Graphics);
+        const radius = isBoss ? 43 : 28;
+        graphics.fillColor = isBoss ? new Color(215, 102, 139, 255) : new Color(93, 124, 219, 255);
+        graphics.circle(0, 0, radius);
+        graphics.fill();
+        graphics.fillColor = new Color(255, 255, 255, 255);
+        graphics.circle(-radius * 0.32, 5, isBoss ? 10 : 7);
+        graphics.circle(radius * 0.32, 5, isBoss ? 10 : 7);
+        graphics.fill();
+        graphics.fillColor = new Color(54, 45, 105, 255);
+        graphics.circle(-radius * 0.32, 5, isBoss ? 4 : 3);
+        graphics.circle(radius * 0.32, 5, isBoss ? 4 : 3);
+        graphics.fill();
+    }
+
+    private createHealthBar(parent: Node, isBoss: boolean): Node {
+        const width = isBoss ? 100 : 66;
+        const root = new Node('HealthBar');
+        parent.addChild(root);
+        root.layer = this.node.layer;
+        root.setPosition(0, isBoss ? 58 : 39);
+        root.addComponent(UITransform).setContentSize(width, 7);
+        const back = root.addComponent(Graphics);
+        back.fillColor = new Color(78, 47, 77, 230);
+        back.roundRect(-width / 2, -3.5, width, 7, 3.5);
+        back.fill();
+        const fill = new Node('Fill');
+        root.addChild(fill);
+        fill.layer = this.node.layer;
+        fill.addComponent(UITransform).setContentSize(width, 7);
+        const fillGraphic = fill.addComponent(Graphics);
+        fillGraphic.fillColor = isBoss ? new Color(246, 137, 169, 255) : new Color(125, 223, 181, 255);
+        fillGraphic.roundRect(-width / 2, -3.5, width, 7, 3.5);
+        fillGraphic.fill();
+        return fill;
+    }
+
+    private createBossLabel(parent: Node): void {
+        const badge = new Node('BossBadge');
+        parent.addChild(badge);
+        badge.layer = this.node.layer;
+        badge.setPosition(0, 75);
+        badge.addComponent(UITransform).setContentSize(110, 24);
+        const label = badge.addComponent(Label);
+        label.string = '✦ BOSS ✦';
+        label.fontSize = 18;
+        label.color = new Color(255, 235, 162, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+    }
+
     private moveEnemy(enemy: EnemyRuntime, dt: number): void {
-        if (!enemy.node.isValid) return;
-
-        const current = enemy.node.position.clone();
-        const nextY = current.y - enemy.speed * dt;
-        // 根据车道比例重新计算 X，让敌人沿着蓝线标出的透视通道前进。
-        const nextX = this.laneToX(enemy.lane, nextY);
-        enemy.node.setPosition(nextX, nextY);
+        if (!enemy.node.isValid || (enemy.tornadoAge > 0 && enemy.tornadoAge <= 0.42)) return;
+        const current = enemy.node.position;
+        const speedMultiplier = enemy.slowUntil > this.elapsed ? enemy.slowMultiplier : 1;
+        const nextY = current.y - enemy.speed * speedMultiplier * dt;
+        enemy.node.setPosition(this.laneToX(enemy.lane, nextY), nextY);
         this.updateEnemyDepth(enemy.node, nextY);
-
-        // 敌人进入前景城门区域，城堡扣血。
         if (nextY <= this.castleY) {
             this.gameManager?.damageCastle(enemy.damage);
             this.removeEnemy(enemy);
         }
     }
 
-    private shootAtEnemy(enemyNode: Node): void {
-        const enemy = this.enemies.find((item) => item.node === enemyNode);
-        if (!enemy || !enemy.node.isValid || this.gameManager?.isGameOver) return;
+    private launchBasicAttack(primary: EnemyRuntime): void {
+        const manager = this.gameManager;
+        if (!manager?.isBattleActive || !primary.node.isValid || this.attackCooldown > 0) return;
+        const now = Date.now();
+        if (now - primary.lastAttackAt < 90) return;
+        primary.lastAttackAt = now;
+        const stats = manager.attackStats;
+        for (let combo = 0; combo < 1 + stats.comboBonus; combo++) {
+            this.attackTargets(primary, stats.scatterBonus).forEach((target, index) => {
+                const critical = Math.random() < Math.min(0.95, stats.critChance);
+                this.shootAtEnemy(target, (10 + stats.damageBonus) * (critical ? 2 : 1), critical, combo * 0.12 + index * 0.025, index - stats.scatterBonus * 0.5);
+            });
+        }
+        this.attackCooldown = 0.45;
+        manager.events.emit(GAME_EVENTS.attackFired);
+    }
 
-        // 法杖在主角图片的左上方，子弹从这个位置发出。
-        const start = this.player
-            ? this.player.position.clone().add(new Vec3(-45, 38, 0))
-            : new Vec3(0, this.castleY, 0);
-        // 怪物会向城堡移动，预估命中位置后沿一条直线发射。
+    private attackTargets(primary: EnemyRuntime, extraCount: number): EnemyRuntime[] {
+        const targets = [primary];
+        const nearby = this.enemies.filter((enemy) => enemy !== primary && enemy.node.isValid)
+            .sort((a, b) => Vec3.distance(a.node.position, primary.node.position) - Vec3.distance(b.node.position, primary.node.position));
+        for (let i = 0; i < extraCount; i++) targets.push(nearby[i] ?? primary);
+        return targets;
+    }
+
+    private shootAtEnemy(enemy: EnemyRuntime, damage: number, critical: boolean, delay: number, offset: number): void {
+        if (!enemy.node.isValid) return;
+        const start = this.player ? this.player.position.clone().add(new Vec3(-45 + offset * 14, 38, 0)) : new Vec3(0, this.castleY, 0);
         const enemyStart = enemy.node.position.clone();
         const target = enemyStart.clone();
-        const projectileSpeed = 850;
-        let duration = Vec3.distance(start, target) / projectileSpeed;
+        let duration = Vec3.distance(start, target) / 850;
         for (let i = 0; i < 4; i++) {
             const targetY = enemyStart.y - enemy.speed * duration;
             target.set(this.laneToX(enemy.lane, targetY), targetY, 0);
-            duration = Vec3.distance(start, target) / projectileSpeed;
+            duration = Vec3.distance(start, target) / 850;
         }
-
-        const projectile = this.createProjectile(start);
-        tween(projectile)
-            .to(duration, { position: target }, { easing: 'linear' })
-            .call(() => {
-                if (projectile.isValid) projectile.destroy();
-                if (enemy.node.isValid) this.hitEnemy(enemy.node);
-            })
-            .start();
+        const projectile = this.createProjectile(start, critical);
+        tween(projectile).delay(delay).to(duration, { position: target }, { easing: 'linear' }).call(() => {
+            if (projectile.isValid) projectile.destroy();
+            if (enemy.node.isValid) this.hitEnemy(enemy, damage, critical, false);
+        }).start();
     }
 
-    private onPointerDown = (event: EventMouse | EventTouch): void => {
-        if (this.gameManager?.isGameOver) return;
-
-        // 用 UI 世界坐标判断命中，避免节点事件被其他 UI 吞掉。
-        const point = event.getUILocation();
-        const worldPoint = new Vec3(point.x, point.y, 0);
-        for (let i = this.enemies.length - 1; i >= 0; i--) {
-            const enemy = this.enemies[i];
-            if (!enemy.node.isValid) continue;
-            const transform = enemy.node.getComponent(UITransform);
-            if (!transform) continue;
-            const local = transform.convertToNodeSpaceAR(worldPoint);
-            if (local.x * local.x + local.y * local.y <= 32 * 32) {
-                enemy.onHit();
-                break;
-            }
-        }
-    };
-
-    private createProjectile(start: Vec3): Node {
+    private createProjectile(start: Vec3, critical: boolean): Node {
         const projectile = new Node('MagicProjectile');
         this.node.addChild(projectile);
         projectile.layer = this.node.layer;
         projectile.setPosition(start);
-
         projectile.addComponent(UITransform).setContentSize(38, 38);
         const graphics = projectile.addComponent(Graphics);
-        graphics.fillColor = new Color(255, 229, 126, 150);
+        graphics.fillColor = critical ? new Color(255, 226, 121, 190) : new Color(255, 229, 126, 150);
         graphics.circle(0, 0, 18);
         graphics.fill();
         graphics.fillColor = new Color(255, 250, 218, 255);
@@ -241,60 +274,147 @@ export class BattleManager extends Component {
         graphics.fillColor = new Color(255, 174, 221, 255);
         graphics.circle(0, 0, 5);
         graphics.fill();
-
         return projectile;
     }
 
-    private hitEnemy(node: Node): void {
-        const enemy = this.enemies.find((item) => item.node === node);
-        if (!enemy || this.gameManager?.isGameOver) return;
-
-        enemy.hp -= 10;
-        this.showHitEffect(node);
-
-        if (enemy.hp <= 0) {
-            this.gameManager?.gainExperience(10);
-            this.removeEnemy(enemy);
+    private hitEnemy(enemy: EnemyRuntime, damage: number, critical: boolean, secondary: boolean): void {
+        if (!this.gameManager?.isBattleActive || !enemy.node.isValid) return;
+        const stats = this.gameManager.attackStats;
+        enemy.hp -= Math.max(1, Math.round(damage));
+        enemy.healthFill.setScale(Math.max(0, enemy.hp / enemy.maxHp), 1, 1);
+        this.showHitEffect(enemy.node, critical);
+        this.showDamageFloat(enemy.node.position, damage, critical);
+        if (!enemy.isBoss && stats.slowPercent > 0 && stats.slowDuration > 0) {
+            enemy.slowUntil = Math.max(enemy.slowUntil, this.elapsed + stats.slowDuration);
+            enemy.slowMultiplier = Math.min(enemy.slowMultiplier, Math.max(0.25, 1 - stats.slowPercent));
         }
+        if (!secondary && stats.areaRadius > 0) {
+            for (const other of [...this.enemies]) {
+                if (other !== enemy && other.node.isValid && Vec3.distance(other.node.position, enemy.node.position) <= stats.areaRadius) {
+                    this.hitEnemy(other, damage * (stats.areaMultiplier || 0.6), false, true);
+                }
+            }
+        }
+        if (enemy.hp > 0) return;
+        const isBoss = enemy.isBoss;
+        this.removeEnemy(enemy);
+        if (isBoss) this.gameManager.completeVictory();
+        else this.gameManager.gainExperience();
+    }
+
+    private showDamageFloat(position: Readonly<Vec3>, damage: number, critical: boolean): void {
+        const node = new Node('DamageFloat');
+        this.node.addChild(node);
+        node.layer = this.node.layer;
+        node.setPosition(position.x, position.y + 42, position.z);
+        node.addComponent(UITransform).setContentSize(120, 30);
+        const label = node.addComponent(Label);
+        label.string = `${critical ? '暴击 ' : ''}-${Math.round(damage)}`;
+        label.fontSize = critical ? 22 : 18;
+        label.color = critical ? new Color(255, 238, 149, 255) : new Color(255, 243, 168, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        tween(node).by(0.55, { position: new Vec3(0, 32, 0) }).call(() => node.destroy()).start();
     }
 
     private removeEnemy(enemy: EnemyRuntime): void {
         const index = this.enemies.indexOf(enemy);
         if (index >= 0) this.enemies.splice(index, 1);
-
-        this.unbindEnemyInput(enemy.node, enemy.onHit);
-        enemy.node.destroy();
+        if (enemy.node.isValid) enemy.node.destroy();
     }
 
-    private bindEnemyInput(enemy: Node, onHit: () => void): void {
-        enemy.on(Node.EventType.TOUCH_START, onHit, this);
-        enemy.on(Node.EventType.MOUSE_DOWN, onHit, this);
+    private clearEnemies(): void {
+        for (const enemy of this.enemies) if (enemy.node.isValid) enemy.node.destroy();
+        this.enemies.length = 0;
     }
 
-    private unbindEnemyInput(enemy: Node, onHit: () => void): void {
-        enemy.off(Node.EventType.TOUCH_START, onHit, this);
-        enemy.off(Node.EventType.MOUSE_DOWN, onHit, this);
-    }
-
-    private showHitEffect(target: Node): void {
+    private showHitEffect(target: Node, critical: boolean): void {
         const effect = new Node('HitEffect');
         this.node.addChild(effect);
         effect.layer = this.node.layer;
         effect.setPosition(target.position);
-
         const graphics = effect.addComponent(Graphics);
-        graphics.fillColor = new Color(255, 244, 170, 235);
+        graphics.fillColor = critical ? new Color(255, 233, 127, 245) : new Color(255, 244, 170, 235);
         graphics.circle(0, 0, 12);
         graphics.fill();
-
-        tween(effect)
-            .to(0.12, { scale: new Vec3(1.8, 1.8, 1) })
-            .call(() => effect.destroy())
-            .start();
+        tween(effect).to(0.12, { scale: new Vec3(1.8, 1.8, 1) }).call(() => effect.destroy()).start();
     }
 
-    private stopBattle(): void {
-        this.enabled = false;
+    private updateTornado(dt: number): void {
+        if (!this.tornado && this.skillClock >= this.tornadoCooldown) this.launchTornado();
+        if (!this.tornado) return;
+        this.tornadoAge += dt;
+        if (this.tornadoAge >= this.tornadoDuration) {
+            this.destroyTornado();
+            return;
+        }
+        const tornadoPosition = new Vec3(Math.sin(this.tornadoAge * Math.PI * 2 * 1.25 / this.tornadoDuration) * 28, 20, 0);
+        this.tornado.setPosition(tornadoPosition);
+        const sprite = this.tornado.getComponent(Sprite);
+        const frame = this.tornadoFrames[Math.min(this.tornadoFrames.length - 1, Math.floor(this.tornadoAge / 0.5))];
+        if (sprite && frame) sprite.spriteFrame = frame;
+        for (const enemy of this.enemies) {
+            if (enemy.isBoss || !enemy.node.isValid || Vec3.distance(enemy.node.position, tornadoPosition) > this.tornadoRadius) continue;
+            enemy.tornadoAge += dt;
+            if (enemy.tornadoAge <= 0.42) continue;
+            const position = enemy.node.position;
+            const pull = Math.min(1, dt * 1.9);
+            const nextY = position.y + (tornadoPosition.y - position.y) * pull;
+            enemy.node.setPosition(position.x + (tornadoPosition.x - position.x) * pull, nextY);
+            this.updateEnemyDepth(enemy.node, nextY);
+        }
+    }
+
+    private launchTornado(): void {
+        this.skillClock = 0;
+        this.tornadoAge = 0;
+        this.tornado = new Node('Tornado');
+        this.node.addChild(this.tornado);
+        this.tornado.layer = this.node.layer;
+        this.tornado.setPosition(0, 20);
+        this.tornado.addComponent(UITransform).setContentSize(220, 220);
+        const sprite = this.tornado.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        if (this.tornadoFrames[0]) sprite.spriteFrame = this.tornadoFrames[0];
+        else this.drawTornadoFallback(this.tornado);
+        for (const enemy of this.enemies) enemy.tornadoAge = 0;
+    }
+
+    private destroyTornado(): void {
+        if (this.tornado?.isValid) this.tornado.destroy();
+        this.tornado = null;
+        this.tornadoAge = 0;
+        for (const enemy of this.enemies) enemy.tornadoAge = 0;
+    }
+
+    private drawTornadoFallback(node: Node): void {
+        const graphics = node.addComponent(Graphics);
+        graphics.strokeColor = new Color(193, 239, 255, 220);
+        graphics.lineWidth = 10;
+        for (let i = 0; i < 4; i++) {
+            graphics.ellipse(0, 55 - i * 30, 30 + i * 15, 8 + i * 4);
+            graphics.stroke();
+        }
+    }
+
+    private loadTornadoFrames(): void {
+        for (let i = 1; i <= 8; i++) {
+            const id = i.toString().padStart(2, '0');
+            resources.load(`tornado-frame-${id}/texture`, Texture2D, (error, texture) => {
+                if (error || !texture || !this.node.isValid) return;
+                const frame = new SpriteFrame();
+                frame.texture = texture;
+                this.tornadoFrames[i - 1] = frame;
+            });
+        }
+    }
+
+    private notifySkillStatus(force = false): void {
+        const active = !!this.tornado;
+        const remaining = active ? 0 : Math.max(0, this.tornadoCooldown - this.skillClock);
+        const signature = `${active}:${remaining.toFixed(1)}`;
+        if (!force && signature === this.lastSkillStatus) return;
+        this.lastSkillStatus = signature;
+        this.gameManager?.events.emit(GAME_EVENTS.skillChanged, active, remaining);
     }
 
     private corridorHalfWidth(y: number): number {
@@ -312,7 +432,3 @@ export class BattleManager extends Component {
         enemy.setScale(scale, scale, 1);
     }
 }
-
-
-
-

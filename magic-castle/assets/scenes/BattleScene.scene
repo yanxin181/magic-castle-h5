@@ -432,6 +432,8 @@
       "__id__": 11
     },
     "spawnInterval": 0.9,
+    "normalEnemyHp": 30,
+    "bossHp": 240,
     "_id": "6eFANGNTpAgo9aYPg9BfIJ"
   },
   {
@@ -445,6 +447,7 @@
     "_enabled": true,
     "__prefab": null,
     "maxHealth": 100,
+    "experiencePerKill": 10,
     "_id": "bfi88kQ0xIJo00y7ylpZJo"
   },
   {
