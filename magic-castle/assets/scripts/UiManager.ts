@@ -799,8 +799,11 @@ export class UiManager extends Component {
 
     private showEndPanel(victory: boolean): void {
         this.showOverlay();
-        this.createPanelTitle(victory ? '城堡守住啦！' : '城门失守', victory ? '小莓已经进化成星辉守护者。' : '重新集结魔力，再次守护城堡。');
-        this.createButton('再玩一次', new Vec3(0, -80), new Vec3(190, 54), new Color(139, 107, 210, 255), () => this.gameManager?.resetGame());
+        this.createPanelTitle(victory ? '恶龙退散！守城成功！' : '城门失守', '解锁更多强力技能，开启下一场冒险！');
+        this.createButton('点击下载', new Vec3(-135, -80), new Vec3(220, 54), new Color(139, 107, 210, 255), () => {
+            // Download navigation is intentionally unset until a destination is provided.
+        }, true);
+        this.createButton('再玩一次', new Vec3(135, -80), new Vec3(220, 54), new Color(139, 107, 210, 255), () => this.gameManager?.resetGame(), true);
     }
 
     private showOverlay(): void {
@@ -972,7 +975,7 @@ export class UiManager extends Component {
         card.on(Node.EventType.MOUSE_UP, invoke, this);
     }
 
-    private createButton(text: string, position: Vec3, size: Vec3, color: Color, onClick: () => void): Node | null {
+    private createButton(text: string, position: Vec3, size: Vec3, color: Color, onClick: () => void, useConfirmBackground = text === '确定' || text === '确认'): Node | null {
         if (!this.overlayContent) return null;
         const button = new Node('PanelButton');
         this.overlayContent.addChild(button);
@@ -983,8 +986,7 @@ export class UiManager extends Component {
         graphics.fillColor = color;
         graphics.roundRect(-size.x / 2, -size.y / 2, size.x, size.y, 14);
         graphics.fill();
-        const isConfirm = text === '确定' || text === '确认';
-        if (isConfirm) {
+        if (useConfirmBackground) {
             const background = new Node('CrystalConfirmBackground');
             button.addChild(background);
             background.layer = this.node.layer;
@@ -992,7 +994,7 @@ export class UiManager extends Component {
             const sprite = background.addComponent(Sprite);
             sprite.sizeMode = Sprite.SizeMode.CUSTOM;
             const applyFrame = (frame: SpriteFrame): void => {
-                // Preserve the artwork's aspect ratio and the existing 190 x 48 hit area.
+                // Preserve the artwork's aspect ratio and the requested button hit area.
                 transform.setContentSize(size.x, size.x * frame.rect.height / frame.rect.width);
                 sprite.spriteFrame = frame;
                 graphics.enabled = false;
@@ -1014,7 +1016,7 @@ export class UiManager extends Component {
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
         label.verticalAlign = Label.VerticalAlign.CENTER;
         label.color = new Color(255, 250, 245, 255);
-        if (isConfirm) {
+        if (useConfirmBackground) {
             label.isBold = true;
             label.enableOutline = true;
             label.outlineColor = new Color(66, 34, 105, 230);

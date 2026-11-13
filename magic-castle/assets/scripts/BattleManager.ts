@@ -1,4 +1,4 @@
-import { Camera, Color, Component, Graphics, Label, Layers, Node, Sprite, SpriteFrame, Texture2D, UITransform, Vec2, Vec3, _decorator, resources, tween } from 'cc';
+import { Camera, Color, Component, Graphics, Label, Layers, Mask, Node, Sprite, SpriteFrame, Texture2D, UITransform, Vec2, Vec3, _decorator, resources, tween } from 'cc';
 import { GAME_EVENTS, GameManager } from './GameManager';
 import { GameState } from './types';
 
@@ -17,6 +17,14 @@ interface EnemyRuntime {
     slowMultiplier: number;
     tornadoReaction: { age: number; damageClock: number; start: Vec3; offset: Vec3; slot: number; bubble: Node } | null;
     healthFill: Node;
+    dragonVisual: DragonVisual | null;
+}
+
+interface DragonVisual {
+    rig: Node;
+    wingLeft: Node;
+    wingRight: Node;
+    phase: number;
 }
 
 @ccclass('BattleManager')
@@ -41,6 +49,9 @@ export class BattleManager extends Component {
     private lastSkillStatus = '';
     private readonly enemies: EnemyRuntime[] = [];
     private readonly tornadoFrames: SpriteFrame[] = [];
+    private dragonFrame: SpriteFrame | null = null;
+    private dragonFrameLoading = false;
+    private readonly dragonSprites: Sprite[] = [];
     private readonly topY = 320;
     private readonly castleY = -245;
     private readonly farHalfWidth = 285;
@@ -66,6 +77,7 @@ export class BattleManager extends Component {
         this.enemyRoot.layer = this.node.layer;
         this.gameManager?.events.on(GAME_EVENTS.phaseChanged, this.onPhaseChanged, this);
         this.loadTornadoFrames();
+        this.loadDragonFrame();
     }
 
     start(): void {
@@ -87,7 +99,10 @@ export class BattleManager extends Component {
                 this.spawnEnemy(Math.random() * 1.5 - 0.75, 0, false);
             }
         }
-        for (const enemy of [...this.enemies]) this.moveEnemy(enemy, dt);
+        for (const enemy of [...this.enemies]) {
+            this.animateDragon(enemy);
+            this.moveEnemy(enemy, dt);
+        }
     }
 
     onDestroy(): void {
@@ -131,7 +146,7 @@ export class BattleManager extends Component {
         this.enemyRoot.addChild(enemy);
         enemy.layer = this.node.layer;
         enemy.addComponent(UITransform).setContentSize(isBoss ? 104 : 64, isBoss ? 104 : 64);
-        this.drawEnemy(enemy, isBoss);
+        const dragonVisual = this.drawEnemy(enemy, isBoss);
         const healthFill = this.createHealthBar(enemy, isBoss);
         if (isBoss) this.createBossLabel(enemy);
         const runtime: EnemyRuntime = {
@@ -147,6 +162,7 @@ export class BattleManager extends Component {
             slowMultiplier: 1,
             tornadoReaction: null,
             healthFill,
+            dragonVisual,
         };
         const spawnY = this.topY + extraDelay * 55;
         enemy.setPosition(this.laneToX(runtime.lane, spawnY), spawnY);
@@ -156,20 +172,97 @@ export class BattleManager extends Component {
         this.enemies.push(runtime);
     }
 
-    private drawEnemy(enemy: Node, isBoss: boolean): void {
+    private drawEnemy(enemy: Node, isBoss: boolean): DragonVisual | null {
+        if (isBoss) return this.createDragonVisual(enemy);
         const graphics = enemy.addComponent(Graphics);
-        const radius = isBoss ? 43 : 28;
-        graphics.fillColor = isBoss ? new Color(215, 102, 139, 255) : new Color(93, 124, 219, 255);
+        const radius = 28;
+        graphics.fillColor = new Color(93, 124, 219, 255);
         graphics.circle(0, 0, radius);
         graphics.fill();
         graphics.fillColor = new Color(255, 255, 255, 255);
-        graphics.circle(-radius * 0.32, 5, isBoss ? 10 : 7);
-        graphics.circle(radius * 0.32, 5, isBoss ? 10 : 7);
+        graphics.circle(-radius * 0.32, 5, 7);
+        graphics.circle(radius * 0.32, 5, 7);
         graphics.fill();
         graphics.fillColor = new Color(54, 45, 105, 255);
-        graphics.circle(-radius * 0.32, 5, isBoss ? 4 : 3);
-        graphics.circle(radius * 0.32, 5, isBoss ? 4 : 3);
+        graphics.circle(-radius * 0.32, 5, 3);
+        graphics.circle(radius * 0.32, 5, 3);
         graphics.fill();
+        return null;
+    }
+
+    private createDragonVisual(parent: Node): DragonVisual {
+        const rig = new Node('DragonRig');
+        parent.addChild(rig);
+        rig.layer = this.node.layer;
+        rig.setScale(0.24, 0.24, 1);
+
+        // Trace only the wings; the head, chest, legs and tail stay in the fixed body layer.
+        const left = [[0, 0], [560, 0], [560, 175], [400, 275], [380, 340], [400, 425], [450, 490], [420, 545], [380, 635], [360, 710], [300, 735], [0, 900]];
+        const right = [[855, 0], [1402, 0], [1402, 875], [1300, 770], [1230, 670], [1100, 650], [970, 635], [870, 650], [770, 620], [685, 650], [695, 575], [775, 490], [850, 410], [905, 300], [880, 200]];
+        const wingLeft = this.createDragonPart(rig, 'LeftWing', left, 430, 535);
+        const wingRight = this.createDragonPart(rig, 'RightWing', right, 735, 555);
+        const body = this.createDragonPart(rig, 'Body', left, 701, 561);
+        const bodyClip = body.children[0];
+        const bodyGraphics = bodyClip.getComponent(Graphics);
+        if (bodyGraphics) {
+            for (const points of [right]) {
+                bodyGraphics.moveTo(points[0][0] - 701, 561 - points[0][1]);
+                for (const point of points.slice(1)) bodyGraphics.lineTo(point[0] - 701, 561 - point[1]);
+                bodyGraphics.close();
+                bodyGraphics.fill();
+            }
+            bodyClip.getComponent(Mask)!.inverted = true;
+        }
+
+        return {
+            rig,
+            wingLeft,
+            wingRight,
+            phase: Math.random() * Math.PI * 2,
+        };
+    }
+
+    private createDragonPart(parent: Node, name: string, points: number[][], pivotX: number, pivotY: number): Node {
+        const pivot = new Node(name);
+        parent.addChild(pivot);
+        pivot.layer = this.node.layer;
+        pivot.setPosition(pivotX - 701, 561 - pivotY);
+        const clip = new Node('Silhouette');
+        pivot.addChild(clip);
+        clip.layer = this.node.layer;
+        clip.setPosition(701 - pivotX, pivotY - 561);
+        clip.addComponent(UITransform).setContentSize(1402, 1122);
+        const mask = clip.addComponent(Mask);
+        mask.type = Mask.Type.GRAPHICS_STENCIL;
+        const graphics = mask.subComp as Graphics;
+        // Mask starts with a full rectangle. Remove it before drawing the silhouette,
+        // otherwise each wing renders and rotates the entire dragon texture.
+        graphics.clear();
+        graphics.moveTo(points[0][0] - 701, 561 - points[0][1]);
+        for (const point of points.slice(1)) graphics.lineTo(point[0] - 701, 561 - point[1]);
+        graphics.close();
+        graphics.fill();
+        const image = new Node('DragonImage');
+        clip.addChild(image);
+        image.layer = this.node.layer;
+        image.addComponent(UITransform).setContentSize(1402, 1122);
+        const sprite = image.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        if (this.dragonFrame) sprite.spriteFrame = this.dragonFrame;
+        this.dragonSprites.push(sprite);
+        return pivot;
+    }
+
+    private animateDragon(enemy: EnemyRuntime): void {
+        const visual = enemy.dragonVisual;
+        if (!visual || !visual.rig.isValid) return;
+        const time = this.elapsed * 4.6 + visual.phase;
+        const lift = (Math.sin(time) + 1) * 0.5;
+        visual.wingLeft.angle = -3 + lift * 9;
+        visual.wingRight.angle = 3 - lift * 9;
+        const wingWidth = 1 - lift * 0.08;
+        visual.wingLeft.setScale(wingWidth, 1, 1);
+        visual.wingRight.setScale(wingWidth, 1, 1);
     }
 
     private createHealthBar(parent: Node, isBoss: boolean): Node {
@@ -177,7 +270,7 @@ export class BattleManager extends Component {
         const root = new Node('HealthBar');
         parent.addChild(root);
         root.layer = this.node.layer;
-        root.setPosition(0, isBoss ? 58 : 39);
+        root.setPosition(0, isBoss ? 132 : 39);
         root.addComponent(UITransform).setContentSize(width, 7);
         const back = root.addComponent(Graphics);
         back.fillColor = new Color(78, 47, 77, 230);
@@ -201,7 +294,7 @@ export class BattleManager extends Component {
         const badge = new Node('BossBadge');
         parent.addChild(badge);
         badge.layer = this.node.layer;
-        badge.setPosition(0, 75);
+        badge.setPosition(0, 156);
         badge.addComponent(UITransform).setContentSize(110, 24);
         const label = badge.addComponent(Label);
         label.string = '✦ BOSS ✦';
@@ -333,6 +426,7 @@ export class BattleManager extends Component {
     private clearEnemies(): void {
         for (const enemy of this.enemies) if (enemy.node.isValid) enemy.node.destroy();
         this.enemies.length = 0;
+        this.dragonSprites.length = 0;
     }
 
     private showHitEffect(target: Node, critical: boolean): void {
@@ -551,6 +645,21 @@ export class BattleManager extends Component {
                 this.tornadoFrames[i - 1] = frame;
             });
         }
+    }
+
+    private loadDragonFrame(): void {
+        if (this.dragonFrame || this.dragonFrameLoading) return;
+        this.dragonFrameLoading = true;
+        resources.load('intro/dragon/texture', Texture2D, (error, texture) => {
+            this.dragonFrameLoading = false;
+            if (error || !texture || !this.node.isValid) return;
+            const frame = new SpriteFrame();
+            frame.texture = texture;
+            this.dragonFrame = frame;
+            for (const sprite of this.dragonSprites) {
+                if (sprite.node?.isValid) sprite.spriteFrame = frame;
+            }
+        });
     }
 
     private notifySkillStatus(force = false): void {
