@@ -42,6 +42,7 @@ export class UiManager extends Component {
     private overlay: Node | null = null;
     private overlayContent: Node | null = null;
     private confirmButtonFrame: SpriteFrame | null = null;
+    private downloadButtonFrame: SpriteFrame | null = null;
     private cardSelectionInProgress = false;
     private diceElapsed = -1;
     private diceNode: Node | null = null;
@@ -138,6 +139,8 @@ export class UiManager extends Component {
     onDestroy(): void {
         this.confirmButtonFrame?.destroy();
         this.confirmButtonFrame = null;
+        this.downloadButtonFrame?.destroy();
+        this.downloadButtonFrame = null;
         this.stopBattleMusic();
         const events = this.gameManager?.events;
         if (!events) return;
@@ -802,8 +805,8 @@ export class UiManager extends Component {
         this.createPanelTitle(victory ? '恶龙退散！守城成功！' : '城门失守', '解锁更多强力技能，开启下一场冒险！');
         this.createButton('点击下载', new Vec3(-135, -80), new Vec3(220, 54), new Color(139, 107, 210, 255), () => {
             // Download navigation is intentionally unset until a destination is provided.
-        }, true);
-        this.createButton('再玩一次', new Vec3(135, -80), new Vec3(220, 54), new Color(139, 107, 210, 255), () => this.gameManager?.resetGame(), true);
+        }, 'download');
+        this.createButton('再玩一次', new Vec3(135, -80), new Vec3(220, 54), new Color(139, 107, 210, 255), () => this.gameManager?.resetGame(), 'confirm');
     }
 
     private showOverlay(): void {
@@ -975,7 +978,7 @@ export class UiManager extends Component {
         card.on(Node.EventType.MOUSE_UP, invoke, this);
     }
 
-    private createButton(text: string, position: Vec3, size: Vec3, color: Color, onClick: () => void, useConfirmBackground = text === '确定' || text === '确认'): Node | null {
+    private createButton(text: string, position: Vec3, size: Vec3, color: Color, onClick: () => void, backgroundType: 'confirm' | 'download' | null = text === '确定' || text === '确认' ? 'confirm' : null): Node | null {
         if (!this.overlayContent) return null;
         const button = new Node('PanelButton');
         this.overlayContent.addChild(button);
@@ -986,8 +989,8 @@ export class UiManager extends Component {
         graphics.fillColor = color;
         graphics.roundRect(-size.x / 2, -size.y / 2, size.x, size.y, 14);
         graphics.fill();
-        if (useConfirmBackground) {
-            const background = new Node('CrystalConfirmBackground');
+        if (backgroundType) {
+            const background = new Node('ButtonBackground');
             button.addChild(background);
             background.layer = this.node.layer;
             const transform = background.addComponent(UITransform);
@@ -999,24 +1002,30 @@ export class UiManager extends Component {
                 sprite.spriteFrame = frame;
                 graphics.enabled = false;
             };
-            if (this.confirmButtonFrame) applyFrame(this.confirmButtonFrame);
-            else resources.load('confirm-button/texture', Texture2D, (error, texture) => {
+            const cachedFrame = backgroundType === 'confirm' ? this.confirmButtonFrame : this.downloadButtonFrame;
+            if (cachedFrame) applyFrame(cachedFrame);
+            else resources.load(`${backgroundType === 'confirm' ? 'confirm-button' : 'download-button'}/texture`, Texture2D, (error, texture) => {
                 if (error || !texture || !this.isValid || !background.isValid) return;
-                if (!this.confirmButtonFrame) {
-                    const frame = new SpriteFrame();
+                const frame = new SpriteFrame();
+                if (backgroundType === 'confirm') {
                     // Exclude empty outer margins, keeping padding around the gold rim.
                     // The supplied PNG remains unchanged (2172 x 724).
                     frame.reset({ texture, rect: new Rect(135, 126, 1896, 447), originalSize: new Size(1896, 447) });
                     this.confirmButtonFrame = frame;
+                } else {
+                    // Crop transparent glow margins so the gold button fits the same 220 x 54 slot.
+                    // The supplied PNG remains unchanged (2172 x 724).
+                    frame.reset({ texture, rect: new Rect(144, 137, 1878, 427), originalSize: new Size(1878, 427) });
+                    this.downloadButtonFrame = frame;
                 }
-                applyFrame(this.confirmButtonFrame);
+                applyFrame(frame);
             });
         }
         const label = this.createLabel(button, 'Copy', text, Vec3.ZERO, 18);
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
         label.verticalAlign = Label.VerticalAlign.CENTER;
         label.color = new Color(255, 250, 245, 255);
-        if (useConfirmBackground) {
+        if (backgroundType) {
             label.isBold = true;
             label.enableOutline = true;
             label.outlineColor = new Color(66, 34, 105, 230);
