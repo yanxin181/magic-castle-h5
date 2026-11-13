@@ -4,10 +4,12 @@ const { ccclass } = _decorator;
 // Keep the dragon's impact, but do not hold the shot for the audio files' long tails.
 const DRAGON_SOUND_END = 5.1;
 const DRAGON_SOUND_FADE = 0.3;
+const DRAGON_GROWL_START = 0.55;
+const DRAGON_REVEAL_START = 3.25;
 const INTRO_MUSIC_VOLUME = 0.05;
 const INTRO_CUE_VOLUMES: Readonly<Record<string, number>> = {
-    reveal: 0.30,
-    growl: 0.24,
+    reveal: 0.48,
+    growl: 0.28,
     'hero-voice': 0.8,
 };
 const ASSETS = ['close-bg', 'wide-bg', 'hero-body', 'hair-left', 'hair-right', 'ribbon-left', 'hero-back', 'dragon', 'halo', 'leaf', 'leaf-curled', 'oath-lettering'];
@@ -38,6 +40,18 @@ export class IntroController extends Component {
     private elapsed = -1;
     private loadAge = 0;
     private run = 0;
+    private ready = false;
+    private loadFailed = false;
+    private waitingForStart = false;
+    private autoStart = false;
+    private ambientElapsed = 0;
+    private titleAge = 0;
+    private titleFade = -1;
+    private titleLayer: Node | null = null;
+    private titleOpacity: UIOpacity | null = null;
+    private startLabel: Label | null = null;
+    private titleHint: Label | null = null;
+    private skipButton: Node | null = null;
     private close!: Node;
     private wide!: Node;
     private closeBackground!: Node;
@@ -98,11 +112,24 @@ export class IntroController extends Component {
     }
 
     play(onComplete: () => void): void {
+        this.showTitle(onComplete);
+        this.autoStart = true;
+        if (this.ready || this.loadFailed) this.beginStory();
+    }
+
+    showTitle(onComplete: () => void): void {
         if (this.root) return;
         const ticket = ++this.run;
         this.done = onComplete;
         this.loadAge = 0;
         this.elapsed = -1;
+        this.ready = false;
+        this.loadFailed = false;
+        this.waitingForStart = true;
+        this.autoStart = false;
+        this.ambientElapsed = 0;
+        this.titleAge = 0;
+        this.titleFade = -1;
         this.cues.clear();
         this.endedCues.clear();
         this.oathStart = Infinity;
@@ -112,30 +139,90 @@ export class IntroController extends Component {
         root.addComponent(UITransform).setContentSize(1280, 720);
         root.addComponent(BlockInputEvents);
         this.rect(root, 'Backdrop', new Color(13, 17, 25), 1280, 720);
-        const loading = this.label(root, '风起于城门之外…', 0, 0, 22);
+        this.buildTitle(root);
         const skip = this.group(root, 'SkipIntro');
+        this.skipButton = skip;
+        skip.active = false;
         skip.setPosition(540, 322);
         skip.addComponent(UITransform).setContentSize(150, 52);
         this.rect(skip, 'Button', new Color(15, 20, 28, 180), 150, 42);
         this.label(skip, '跳过开场  ›', 0, 0, 18);
         skip.on(Node.EventType.TOUCH_END, this.finish, this);
+        skip.on(Node.EventType.MOUSE_UP, this.finish, this);
         void this.load().then(ok => {
-            if (!this.isValid || ticket !== this.run || !this.root) return;
-            if (!ok) { console.warn('[Intro] Asset load failed; continuing to battle.'); this.finish(); return; }
-            loading.destroy();
+            if (!this.isValid || ticket !== this.run || !this.root || this.loadFailed) return;
+            if (!ok) { this.showLoadFallback(); return; }
             this.build(root);
+            this.titleLayer?.setSiblingIndex(root.children.length - 1);
             skip.setSiblingIndex(root.children.length - 1);
-            this.elapsed = 0;
+            this.ready = true;
+            if (this.startLabel) this.startLabel.string = '开始冒险';
+            if (this.titleHint) this.titleHint.string = '风起城门，故事由你开启';
             this.render(0);
-            if (this.audioClip) {
-                this.audio = root.addComponent(AudioSource);
-                this.audio.clip = this.audioClip;
-                this.audio.loop = true;
-                this.audio.volume = INTRO_MUSIC_VOLUME;
-                this.audio.play();
-            }
+            if (this.autoStart) this.beginStory();
         });
     }
+
+    private buildTitle(root: Node): void {
+        const title = this.group(root, 'OpeningTitle');
+        this.titleLayer = title;
+        this.titleOpacity = title.addComponent(UIOpacity);
+        const shade = this.group(title, 'TitleShade');
+        shade.setPosition(300, 40);
+        const g = shade.addComponent(Graphics);
+        for (let i = 0; i < 20; i++) {
+            g.fillColor = new Color(18, 15, 35, 7);
+            g.ellipse(0, 0, 345 - i * 9, 300 - i * 7); g.fill();
+        }
+        this.label(title, '一 段 守 护 的 冒 险', 300, 218, 17);
+        const heading = this.label(title, '守护\n魔法城堡', 300, 108, 62);
+        heading.getComponent(UITransform)!.setContentSize(520, 166);
+        const text = heading.getComponent(Label)!;
+        text.lineHeight = 78;
+        text.isBold = true;
+        text.fontFamily = 'SimSun';
+        text.enableOutline = true;
+        text.outlineColor = new Color(55, 32, 63);
+        text.outlineWidth = 2;
+        this.titleHint = this.label(title, '正在准备这段冒险…', 300, -22, 19).getComponent(Label)!;
+        const button = this.group(title, 'StartAdventure');
+        button.setPosition(300, -120);
+        button.addComponent(UITransform).setContentSize(246, 66);
+        const surface = button.addComponent(Graphics);
+        surface.fillColor = new Color(77, 49, 99, 240);
+        surface.roundRect(-123, -33, 246, 66, 20); surface.fill();
+        surface.strokeColor = new Color(238, 205, 145);
+        surface.lineWidth = 2;
+        surface.roundRect(-122, -32, 244, 64, 19); surface.stroke();
+        this.startLabel = this.label(button, '正在准备…', 0, 0, 25).getComponent(Label)!;
+        this.startLabel.node.getComponent(UITransform)!.setContentSize(230, 50);
+        button.on(Node.EventType.TOUCH_END, this.beginStory, this);
+        button.on(Node.EventType.MOUSE_UP, this.beginStory, this);
+    }
+
+    private showLoadFallback(): void {
+        this.loadFailed = true;
+        if (this.startLabel) this.startLabel.string = '开始冒险';
+        if (this.titleHint) this.titleHint.string = '开场暂未就绪，点击直接进入冒险';
+        if (this.autoStart) this.beginStory();
+    }
+
+    private beginStory = (): void => {
+        if (!this.root || !this.waitingForStart || (!this.ready && !this.loadFailed)) return;
+        this.waitingForStart = false;
+        if (this.loadFailed) { this.finish(); return; }
+        this.elapsed = 0;
+        this.titleFade = 0;
+        if (this.skipButton) this.skipButton.active = true;
+        this.render(0);
+        if (this.audioClip) {
+            this.audio = this.root.addComponent(AudioSource);
+            this.audio.clip = this.audioClip;
+            this.audio.loop = true;
+            this.audio.volume = 0;
+            this.audio.play();
+        }
+    };
 
     private group(parent: Node, name: string): Node {
         const n = new Node(name);
@@ -356,36 +443,45 @@ export class IntroController extends Component {
 
     update(dt: number): void {
         if (!this.root) return;
-        if (this.elapsed < 0) {
+        if (!this.ready) {
+            if (this.loadFailed) return;
             this.loadAge += dt;
-            if (this.loadAge > 12) this.finish();
+            if (this.loadAge > 12) this.showLoadFallback();
             return;
+        }
+        this.ambientElapsed += dt;
+        if (this.waitingForStart) {
+            this.titleAge += dt;
+            this.render(0);
+            return;
+        }
+        if (this.titleFade >= 0) {
+            this.titleFade += dt;
+            if (this.titleOpacity) this.titleOpacity.opacity = Math.round(255 * (1 - smooth(this.titleFade / 0.3)));
+            if (this.titleFade >= 0.3) {
+                if (this.titleLayer) this.titleLayer.active = false;
+                this.titleFade = -1;
+            }
         }
         this.elapsed += dt;
         if (this.elapsed >= this.fadeStart + 0.7) { this.finish(); return; }
-        if (this.elapsed < DRAGON_SOUND_END) {
-            if (this.elapsed >= 3.25) this.playCue('reveal');
-            // Never introduce a late dragon growl over the heroine's line.
-            if (this.elapsed >= 4.45 && !this.endedCues.has('reveal')) this.playCue('growl');
-        } else if (!this.cues.has('hero-voice')) {
-            for (const audio of this.cueAudio) {
-                if (audio.node.name === 'reveal' || audio.node.name === 'growl') {
-                    audio.volume = 0;
-                    audio.stop();
-                }
-            }
-            // stop() does not emit ENDED. Mark these cues complete before starting narration.
-            this.endedCues.add('reveal');
-            this.endedCues.add('growl');
+        // Hear the unseen dragon in the close shot; reserve the impact for its reveal.
+        if (this.elapsed >= DRAGON_GROWL_START && !this.cues.has('hero-voice')) {
+            this.playCue('growl');
         }
-        if (this.endedCues.has('reveal') && (!this.cues.has('growl') || this.endedCues.has('growl'))) {
+        if (this.elapsed >= DRAGON_REVEAL_START && this.elapsed < DRAGON_SOUND_END) {
+            this.playCue('reveal');
+        }
+        this.endCueAt('reveal', DRAGON_SOUND_END);
+        if (this.endedCues.has('reveal')) {
             this.playCue('hero-voice');
         }
         this.render(this.elapsed);
     }
 
     private render(t: number): void {
-        const cut = 3.25;
+        const motion = this.ambientElapsed;
+        const cut = DRAGON_REVEAL_START;
         const reveal = smooth((t - cut) / 1.1);
         this.close.active = t < cut;
         this.wide.active = t >= cut;
@@ -395,9 +491,9 @@ export class IntroController extends Component {
         this.close.setPosition(-whip * 230, 0);
         this.hero.setPosition(-195 - push * 12, -110 - push * 20);
         this.hero.setScale(0.68 + push * 0.025, 0.68 + push * 0.025, 1);
-        this.hairLeft.angle = -7 + Math.sin(t * 2.4) * 2.2;
-        this.hairRight.angle = 5 + Math.sin(t * 2.7 + 1) * 2.8;
-        this.ribbon.angle = Math.sin(t * 3.5 + 0.8) * 4;
+        this.hairLeft.angle = -7 + Math.sin(motion * 2.4) * 2.2;
+        this.hairRight.angle = 5 + Math.sin(motion * 2.7 + 1) * 2.8;
+        this.ribbon.angle = Math.sin(motion * 3.5 + 0.8) * 4;
         const settle = 1 - smooth((t - cut) / 0.75);
         const shake = t > cut && t < cut + 0.65 ? Math.sin((t - cut) * 55) * 4 * settle : 0;
         this.wide.setPosition(settle * 100 + shake, shake * 0.45);
@@ -405,32 +501,46 @@ export class IntroController extends Component {
         this.dragon.setScale(0.65 + Math.sin(t * 1.6) * 0.002, 0.65 + Math.sin(t * 1.6) * 0.003, 1);
         this.wingLeft.angle = (1 - reveal) * -3 + Math.sin(t * 1.4) * 0.45;
         this.wingRight.angle = (1 - reveal) * 3 - Math.sin(t * 1.4 + 0.3) * 0.45;
-        this.head.angle = -smooth((t - 4.7) / 2) * 0.7 + Math.sin(t * 1.7) * 0.2;
+        this.head.angle = -smooth((t - (cut + 0.7)) / 2) * 0.7 + Math.sin(t * 1.7) * 0.2;
         this.halo.getComponent(UIOpacity)!.opacity = clamp(smooth((t - 3.45) / 1.2) * (0.88 + 0.06 * Math.sin(t * 2))) * 255;
         this.halo.angle = -4 + (t - cut) * 1.2;
         this.back.setPosition(-400 - reveal * 10, -225);
         for (let i = 0; i < this.leaves.length; i++) {
             const leaf = this.leaves[i];
             const speed = 80 + (i % 4) * 35;
-            const x = ((i * 197 + t * speed + whip * 320) % 1600) - 800;
-            const y = 290 - (i * 73 % 600) + Math.sin(t * 1.6 + i) * 30;
+            const x = ((i * 197 + motion * speed + whip * 320) % 1600) - 800;
+            const y = 290 - (i * 73 % 600) + Math.sin(motion * 1.6 + i) * 30;
             leaf.setPosition(t < cut ? x : -x, y);
-            leaf.angle = i * 39 + t * (35 + i * 3);
-            leaf.setScale(0.45 + Math.abs(Math.sin(t * 2 + i)) * 0.55, 1, 1);
+            leaf.angle = i * 39 + motion * (35 + i * 3);
+            leaf.setScale(0.45 + Math.abs(Math.sin(motion * 2 + i)) * 0.55, 1, 1);
         }
         this.renderOath(t);
         this.fadeRect(this.veil, 32, 27, 38, Math.max(0, 1 - Math.abs(t - cut) / 0.23));
         const fade = 1 - smooth((t - this.fadeStart) / 0.7);
-        this.fadeRect(this.blackout, 8, 10, 16, Math.max(1 - smooth(t / 0.55), 1 - fade));
+        // The opening fade belongs to the title screen, never to the start-button transition.
+        const entrance = this.waitingForStart ? 1 - smooth(this.titleAge / 0.55) : 0;
+        this.fadeRect(this.blackout, 8, 10, 16, Math.max(entrance, 1 - fade));
         if (this.audio) {
             this.audio.volume = INTRO_MUSIC_VOLUME * smooth(t / 0.55) * fade;
         }
         for (const audio of this.cueAudio) {
-            const voice = audio.node.name === 'hero-voice';
             const volume = INTRO_CUE_VOLUMES[audio.node.name];
-            const dragonFade = voice ? 1 : 1 - smooth((t - (DRAGON_SOUND_END - DRAGON_SOUND_FADE)) / DRAGON_SOUND_FADE);
-            audio.volume = volume * fade * dragonFade;
+            const cueFade = audio.node.name === 'reveal'
+                ? 1 - smooth((t - (DRAGON_SOUND_END - DRAGON_SOUND_FADE)) / DRAGON_SOUND_FADE)
+                : this.endedCues.has(audio.node.name) ? 0 : 1;
+            audio.volume = volume * fade * cueFade;
         }
+    }
+
+    private endCueAt(name: string, end: number): void {
+        if (this.elapsed < end || this.endedCues.has(name)) return;
+        const audio = this.cueAudio.find(source => source.node.name === name);
+        if (audio) {
+            audio.volume = 0;
+            audio.stop();
+        }
+        // stop() does not emit ENDED; also handle a frame that skipped the entire cue.
+        this.endedCues.add(name);
     }
 
     private playCue(name: string): void {
@@ -440,11 +550,14 @@ export class IntroController extends Component {
         if (!clip || !this.root) return;
         const audio = this.group(this.root, name).addComponent(AudioSource);
         audio.clip = clip;
+        // Sustain the off-screen growl across the reveal until narration actually starts.
+        audio.loop = name === 'growl';
         audio.volume = INTRO_CUE_VOLUMES[name];
         const ticket = this.run;
         if (name === 'hero-voice') {
             audio.node.once(AudioSource.EventType.STARTED, () => {
                 if (!this.isValid || ticket !== this.run || !this.root) return;
+                this.endCueAt('growl', this.elapsed);
                 // Begin the lettering on actual playback, not on an estimated duration.
                 this.oathStart = this.elapsed;
                 this.renderOath(this.elapsed);
@@ -479,6 +592,13 @@ export class IntroController extends Component {
         this.root.destroy();
         this.root = null;
         this.elapsed = -1;
+        this.ready = false;
+        this.waitingForStart = false;
+        this.titleLayer = null;
+        this.titleOpacity = null;
+        this.startLabel = null;
+        this.titleHint = null;
+        this.skipButton = null;
         this.leaves = [];
         this.oathLines = [];
         this.oathMotes = [];

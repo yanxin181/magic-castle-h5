@@ -1,4 +1,4 @@
-import { AudioClip, AudioSource, Color, Component, Graphics, Label, Mask, Node, Sprite, SpriteFrame, Texture2D, UIOpacity, UITransform, Vec2, Vec3, _decorator, resources, tween } from 'cc';
+import { AudioClip, AudioSource, BlockInputEvents, Color, Component, Graphics, Label, Mask, Node, Rect, Size, Sprite, SpriteFrame, Texture2D, UIOpacity, UITransform, Vec2, Vec3, _decorator, resources, tween } from 'cc';
 import { BattleManager } from './BattleManager';
 import { DiceRollResult, GAME_EVENTS, GameManager, UpgradeCard } from './GameManager';
 import { GameState } from './types';
@@ -27,6 +27,7 @@ export class UiManager extends Component {
     @property(GameManager) gameManager: GameManager | null = null;
 
     private levelLabel: Label | null = null;
+    private hud: Node | null = null;
     private experienceLabel: Label | null = null;
     private castleLabel: Label | null = null;
     private statusLabel: Label | null = null;
@@ -40,6 +41,7 @@ export class UiManager extends Component {
     private castleHitElapsed = -1;
     private overlay: Node | null = null;
     private overlayContent: Node | null = null;
+    private confirmButtonFrame: SpriteFrame | null = null;
     private cardSelectionInProgress = false;
     private diceElapsed = -1;
     private diceNode: Node | null = null;
@@ -134,6 +136,8 @@ export class UiManager extends Component {
     }
 
     onDestroy(): void {
+        this.confirmButtonFrame?.destroy();
+        this.confirmButtonFrame = null;
         this.stopBattleMusic();
         const events = this.gameManager?.events;
         if (!events) return;
@@ -251,10 +255,16 @@ export class UiManager extends Component {
     }
 
     private createHud(): void {
-        this.levelLabel = this.createLabel(this.node, 'LevelLabel', 'Lv.1', new Vec3(-520, 310), 24);
-        this.experienceLabel = this.createLabel(this.node, 'ExperienceLabel', 'XP 0/30', new Vec3(-520, 275), 20);
-        this.castleLabel = this.createLabel(this.node, 'CastleLabel', '城堡 HP 100/100', new Vec3(-520, 205), 20);
-        this.statusLabel = this.createLabel(this.node, 'StatusLabel', '点击怪物攻击 · 守护城堡', new Vec3(300, 310), 20);
+        const hud = new Node('BattleHud');
+        this.node.addChild(hud);
+        hud.layer = this.node.layer;
+        hud.addComponent(UITransform).setContentSize(1280, 720);
+        this.hud = hud;
+        hud.active = false;
+        this.levelLabel = this.createLabel(hud, 'LevelLabel', 'Lv.1', new Vec3(-520, 310), 24);
+        this.experienceLabel = this.createLabel(hud, 'ExperienceLabel', 'XP 0/30', new Vec3(-520, 275), 20);
+        this.castleLabel = this.createLabel(hud, 'CastleLabel', '城堡 HP 100/100', new Vec3(-520, 205), 20);
+        this.statusLabel = this.createLabel(hud, 'StatusLabel', '点击怪物攻击 · 守护城堡', new Vec3(300, 310), 20);
         this.createSkillIcon();
         this.experienceFill = this.createBar(new Vec3(-520, 250), 250, 12, new Color(255, 166, 198, 255));
         this.castleFill = this.createBar(new Vec3(-520, 175), 250, 12, new Color(116, 205, 152, 255));
@@ -346,7 +356,7 @@ export class UiManager extends Component {
 
     private createBar(position: Vec3, width: number, height: number, color: Color): Node {
         const root = new Node('HudBar');
-        this.node.addChild(root);
+        (this.hud ?? this.node).addChild(root);
         root.layer = this.node.layer;
         root.setPosition(position);
         root.addComponent(UITransform).setContentSize(width, height);
@@ -370,7 +380,7 @@ export class UiManager extends Component {
 
     private createSkillIcon(): void {
         const panel = new Node('TornadoSkillPanel');
-        this.node.addChild(panel);
+        (this.hud ?? this.node).addChild(panel);
         panel.layer = this.node.layer;
         panel.setPosition(-510, -300);
         panel.addComponent(UITransform).setContentSize(220, 90);
@@ -497,6 +507,7 @@ export class UiManager extends Component {
     };
 
     private refreshPhase = (phase: GameState): void => {
+        if (this.hud) this.hud.active = phase !== GameState.Start;
         if (phase !== GameState.Evolve) this.clearEvolutionSuccess();
         if (this.statusLabel) {
             const copy: Record<string, string> = {
@@ -530,15 +541,33 @@ export class UiManager extends Component {
     };
 
     private showStartPanel(): void {
-        this.showOverlay();
-        this.createPanelTitle('守护魔法城堡', '怪物从天而降，点按敌人释放星光攻击。');
-        this.createButton('开始冒险', new Vec3(0, -78), new Vec3(190, 54), new Color(139, 107, 210, 255), () => {
-            if (!this.intro || this.gameManager?.phase !== GameState.Start) return;
-            this.hideOverlay();
-            this.intro.play(() => {
-                if (this.isValid) this.gameManager?.beginBattle();
-            });
-        });
+        this.hideOverlay();
+        this.diceElapsed = -1;
+        this.diceNode = null;
+        this.diceGraphics = null;
+        this.evolutionElapsed = -1;
+        this.evolutionWaitingForFrames = false;
+        this.evolutionFinished = false;
+        this.cardSelectionInProgress = false;
+        this.intro?.showTitle(() => this.revealBattle());
+    }
+
+    private revealBattle(): void {
+        if (!this.isValid || this.gameManager?.phase !== GameState.Start) return;
+        // Continue the cinematic's final black frame into a short reveal of the battlefield.
+        const curtain = new Node('BattleEntrance');
+        this.node.addChild(curtain);
+        curtain.layer = this.node.layer;
+        curtain.addComponent(UITransform).setContentSize(1280, 720);
+        curtain.addComponent(BlockInputEvents);
+        const graphics = curtain.addComponent(Graphics);
+        graphics.fillColor = new Color(8, 10, 16);
+        graphics.rect(-640, -360, 1280, 720);
+        graphics.fill();
+        const opacity = curtain.addComponent(UIOpacity);
+        this.gameManager.beginBattle();
+        curtain.setSiblingIndex(this.node.children.length - 1);
+        tween(opacity).to(0.4, { opacity: 0 }).call(() => curtain.destroy()).start();
     }
 
     private showCardPanel(cards: readonly UpgradeCard[]): void {
@@ -954,10 +983,43 @@ export class UiManager extends Component {
         graphics.fillColor = color;
         graphics.roundRect(-size.x / 2, -size.y / 2, size.x, size.y, 14);
         graphics.fill();
+        const isConfirm = text === '确定' || text === '确认';
+        if (isConfirm) {
+            const background = new Node('CrystalConfirmBackground');
+            button.addChild(background);
+            background.layer = this.node.layer;
+            const transform = background.addComponent(UITransform);
+            const sprite = background.addComponent(Sprite);
+            sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+            const applyFrame = (frame: SpriteFrame): void => {
+                // Preserve the artwork's aspect ratio and the existing 190 x 48 hit area.
+                transform.setContentSize(size.x, size.x * frame.rect.height / frame.rect.width);
+                sprite.spriteFrame = frame;
+                graphics.enabled = false;
+            };
+            if (this.confirmButtonFrame) applyFrame(this.confirmButtonFrame);
+            else resources.load('confirm-button/texture', Texture2D, (error, texture) => {
+                if (error || !texture || !this.isValid || !background.isValid) return;
+                if (!this.confirmButtonFrame) {
+                    const frame = new SpriteFrame();
+                    // Exclude empty outer margins, keeping padding around the gold rim.
+                    // The supplied PNG remains unchanged (2172 x 724).
+                    frame.reset({ texture, rect: new Rect(135, 126, 1896, 447), originalSize: new Size(1896, 447) });
+                    this.confirmButtonFrame = frame;
+                }
+                applyFrame(this.confirmButtonFrame);
+            });
+        }
         const label = this.createLabel(button, 'Copy', text, Vec3.ZERO, 18);
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
         label.verticalAlign = Label.VerticalAlign.CENTER;
         label.color = new Color(255, 250, 245, 255);
+        if (isConfirm) {
+            label.isBold = true;
+            label.enableOutline = true;
+            label.outlineColor = new Color(66, 34, 105, 230);
+            label.outlineWidth = 1;
+        }
         let lastPressed = -Infinity;
         const invoke = (): void => {
             const now = Date.now();
