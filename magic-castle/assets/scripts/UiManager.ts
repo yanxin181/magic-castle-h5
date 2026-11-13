@@ -2,14 +2,24 @@ import { AudioClip, AudioSource, Color, Component, Graphics, Label, Mask, Node, 
 import { BattleManager } from './BattleManager';
 import { DiceRollResult, GAME_EVENTS, GameManager, UpgradeCard } from './GameManager';
 import { GameState } from './types';
+import { IntroController } from './IntroController';
 
 const { ccclass, property } = _decorator;
+// Fixed mix levels: music stays underneath effects, without attack-triggered ducking.
+const BATTLE_MUSIC_VOLUME = 0.04;
+const SFX_VOLUMES: Readonly<Record<string, number>> = {
+    'hit-sfx': 0.18,
+    'card-click-sfx': 0.08,
+    'level-up-sfx': 0.14,
+    'tornado-sfx': 0.16,
+    'evolution-sfx': 0.18,
+};
 const LUCKY_DICE_MESSAGES = [
     '幸运降临！',
     '好运加倍！',
     '你就是天选之人！',
-    '星辉眷顾你！',
-    '好运正在发光！',
+    '系统：这手气合理吗？',
+    '欧皇来了都得排你后面！',
 ];
 
 @ccclass('UiManager')
@@ -22,6 +32,7 @@ export class UiManager extends Component {
     private statusLabel: Label | null = null;
     private skillLabel: Label | null = null;
     private skillIcon: Sprite | null = null;
+    private skillCooldownShade: Graphics | null = null;
     private experienceFill: Node | null = null;
     private castleFill: Node | null = null;
     private castle: Node | null = null;
@@ -49,7 +60,7 @@ export class UiManager extends Component {
     private evolutionSuccessMask: Graphics | null = null;
     private readonly evolutionSparkles: Node[] = [];
     private battleMusic: AudioSource | null = null;
-    private readonly soundClips: Record<string, AudioClip> = {};
+    private readonly soundSources: Record<string, AudioSource> = {};
     // 站立和攻击共用同一套 480×540 图片画布，显示尺寸保持一致。
     private readonly heroSize = { width: 207, height: 233 };
     private readonly heroAttackFrameCount = 6;
@@ -63,6 +74,8 @@ export class UiManager extends Component {
     private readonly castleSize = { width: 1280, height: 720 * 465 / 1045 };
     private readonly castleRestY = -360 + 720 * 465 / 1045 / 2;
     private readonly castleHitDuration = 0.46;
+    private readonly tornadoCooldownDuration = 5;
+    private intro: IntroController | null = null;
 
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.getComponent(GameManager);
@@ -73,6 +86,8 @@ export class UiManager extends Component {
         this.createHud();
         this.createOverlay();
         this.createAudio();
+        this.intro = this.node.getComponent(IntroController) ?? this.node.addComponent(IntroController);
+        this.intro.preload();
     }
 
     start(): void {
@@ -84,9 +99,9 @@ export class UiManager extends Component {
         events.on(GAME_EVENTS.levelChanged, this.refreshLevel, this);
         events.on(GAME_EVENTS.phaseChanged, this.refreshPhase, this);
         events.on(GAME_EVENTS.skillChanged, this.refreshSkill, this);
+        events.on(GAME_EVENTS.tornadoCast, this.playTornadoSound, this);
         events.on(GAME_EVENTS.attackFired, this.playHeroAttack, this);
         events.on(GAME_EVENTS.heroEvolved, this.applyHeroEvolution, this);
-        events.on(GAME_EVENTS.cardApplied, this.playCardSound, this);
         this.refreshAll();
         this.refreshPhase(this.gameManager?.phase ?? GameState.Start);
     }
@@ -119,6 +134,7 @@ export class UiManager extends Component {
     }
 
     onDestroy(): void {
+        this.stopBattleMusic();
         const events = this.gameManager?.events;
         if (!events) return;
         events.off(GAME_EVENTS.healthChanged, this.refreshHealth, this);
@@ -127,9 +143,9 @@ export class UiManager extends Component {
         events.off(GAME_EVENTS.levelChanged, this.refreshLevel, this);
         events.off(GAME_EVENTS.phaseChanged, this.refreshPhase, this);
         events.off(GAME_EVENTS.skillChanged, this.refreshSkill, this);
+        events.off(GAME_EVENTS.tornadoCast, this.playTornadoSound, this);
         events.off(GAME_EVENTS.attackFired, this.playHeroAttack, this);
         events.off(GAME_EVENTS.heroEvolved, this.applyHeroEvolution, this);
-        events.off(GAME_EVENTS.cardApplied, this.playCardSound, this);
     }
 
     private createBackground(): void {
@@ -297,12 +313,19 @@ export class UiManager extends Component {
         resources.load('battle-music', AudioClip, (error, clip) => {
             if (error || !clip || !this.node.isValid || !this.battleMusic) return;
             this.battleMusic.clip = clip;
-            this.battleMusic.volume = 0.26;
-            if (this.gameManager?.isBattleActive) this.playBattleMusic();
+            this.battleMusic.volume = BATTLE_MUSIC_VOLUME;
+            if (this.shouldPlayBattleMusic(this.gameManager?.phase)) this.playBattleMusic();
         });
-        ['hit-sfx', 'card-click-sfx', 'level-up-sfx'].forEach((name) => {
+        ['hit-sfx', 'card-click-sfx', 'level-up-sfx', 'tornado-sfx', 'evolution-sfx'].forEach((name) => {
+            const effectNode = new Node(name);
+            audio.addChild(effectNode);
+            const source = effectNode.addComponent(AudioSource);
+            source.volume = SFX_VOLUMES[name];
+            this.soundSources[name] = source;
             resources.load(name, AudioClip, (error, clip) => {
-                if (!error && clip && this.node.isValid) this.soundClips[name] = clip;
+                if (!error && clip && this.node.isValid && source.isValid) {
+                    source.clip = clip;
+                }
             });
         });
     }
@@ -365,9 +388,34 @@ export class UiManager extends Component {
         icon.layer = this.node.layer;
         icon.setPosition(-66, 0);
         icon.addComponent(UITransform).setContentSize(68, 68);
-        const sprite = icon.addComponent(Sprite);
+        const iconMask = icon.addComponent(Mask);
+        iconMask.type = Mask.Type.GRAPHICS_STENCIL;
+        const iconMaskGraphics = iconMask.subComp as Graphics;
+        iconMaskGraphics.clear();
+        iconMaskGraphics.roundRect(-34, -34, 68, 68, 13);
+        iconMaskGraphics.fill();
+        const iconImage = new Node('TornadoSkillImage');
+        icon.addChild(iconImage);
+        iconImage.layer = this.node.layer;
+        iconImage.addComponent(UITransform).setContentSize(68, 68);
+        const sprite = iconImage.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
         this.skillIcon = sprite;
+        const shade = new Node('TornadoCooldownShade');
+        icon.addChild(shade);
+        shade.layer = this.node.layer;
+        shade.addComponent(UITransform).setContentSize(68, 68);
+        this.skillCooldownShade = shade.addComponent(Graphics);
+        const iconBorder = new Node('TornadoSkillIconBorder');
+        panel.addChild(iconBorder);
+        iconBorder.layer = this.node.layer;
+        iconBorder.setPosition(-66, 0);
+        iconBorder.addComponent(UITransform).setContentSize(70, 70);
+        const border = iconBorder.addComponent(Graphics);
+        border.strokeColor = new Color(218, 222, 241, 225);
+        border.lineWidth = 2;
+        border.roundRect(-35, -35, 70, 70, 14);
+        border.stroke();
         const title = this.createLabel(panel, 'TornadoSkillTitle', '龙卷风', new Vec3(42, 15), 20);
         title.node.getComponent(UITransform)?.setContentSize(120, 30);
         title.verticalAlign = Label.VerticalAlign.CENTER;
@@ -378,6 +426,7 @@ export class UiManager extends Component {
         this.skillLabel.verticalAlign = Label.VerticalAlign.CENTER;
         this.skillLabel.overflow = Label.Overflow.SHRINK;
         this.skillLabel.color = new Color(225, 215, 239, 255);
+        this.refreshSkill(false, this.tornadoCooldownDuration);
         resources.load('tornado-icon/texture', Texture2D, (error, texture) => {
             if (error || !texture || !icon.isValid) return;
             const frame = new SpriteFrame();
@@ -435,7 +484,16 @@ export class UiManager extends Component {
     private refreshSkill = (active: boolean, remaining: number): void => {
         if (!this.skillLabel) return;
         this.skillLabel.string = remaining <= 0 ? '准备就绪' : `${active ? '释放中 · ' : '冷却 '}${remaining.toFixed(1)}s`;
-        if (this.skillIcon) this.skillIcon.color = active || remaining <= 0 ? Color.WHITE : new Color(170, 170, 185, 230);
+        if (this.skillIcon) this.skillIcon.color = active || remaining <= 0 ? Color.WHITE : new Color(205, 205, 220, 255);
+        if (this.skillCooldownShade) {
+            this.skillCooldownShade.clear();
+            const fraction = active ? 0 : Math.max(0, Math.min(1, remaining / this.tornadoCooldownDuration));
+            if (fraction > 0) {
+                this.skillCooldownShade.fillColor = new Color(20, 18, 38, 190);
+                this.skillCooldownShade.rect(-34, 34 - 68 * fraction, 68, 68 * fraction);
+                this.skillCooldownShade.fill();
+            }
+        }
     };
 
     private refreshPhase = (phase: GameState): void => {
@@ -453,12 +511,12 @@ export class UiManager extends Component {
             };
             this.statusLabel.string = copy[phase] ?? '';
         }
+        if (this.shouldPlayBattleMusic(phase)) this.playBattleMusic();
+        else this.stopBattleMusic();
         if (phase === GameState.Battle || phase === GameState.Boss) {
             this.hideOverlay();
-            this.playBattleMusic();
             return;
         }
-        this.stopBattleMusic();
         if (phase === GameState.Start) {
             this.resetCastleHit();
             this.restoreHeroDefaultAppearance();
@@ -474,12 +532,19 @@ export class UiManager extends Component {
     private showStartPanel(): void {
         this.showOverlay();
         this.createPanelTitle('守护魔法城堡', '怪物从天而降，点按敌人释放星光攻击。');
-        this.createButton('开始冒险', new Vec3(0, -78), new Vec3(190, 54), new Color(139, 107, 210, 255), () => this.gameManager?.beginBattle());
+        this.createButton('开始冒险', new Vec3(0, -78), new Vec3(190, 54), new Color(139, 107, 210, 255), () => {
+            if (!this.intro || this.gameManager?.phase !== GameState.Start) return;
+            this.hideOverlay();
+            this.intro.play(() => {
+                if (this.isValid) this.gameManager?.beginBattle();
+            });
+        });
     }
 
     private showCardPanel(cards: readonly UpgradeCard[]): void {
         this.showOverlay();
         if (!this.overlayContent) return;
+        this.playSfx('level-up-sfx');
 
         let selectedCard: UpgradeCard | null = null;
         let diceSelected = false;
@@ -953,6 +1018,7 @@ export class UiManager extends Component {
         // 关键帧为 3:4 竖图；只调整尺寸，角色的战场坐标保持不变。
         this.hero.getComponent(UITransform)?.setContentSize(180, 240);
         this.heroSprite.spriteFrame = this.evolutionFrames[0];
+        this.playSfx('evolution-sfx');
         this.hero.setScale(0.9, 0.9, 1);
         tween(this.hero)
             .to(0.22, { scale: new Vec3(1.04, 1.04, 1) }, { easing: 'quadOut' })
@@ -1044,7 +1110,6 @@ export class UiManager extends Component {
         });
         this.evolutionSuccessElapsed = 0;
         this.drawEvolutionSuccessMask(0.01);
-        this.playSfx('level-up-sfx');
     }
 
     private updateEvolutionSuccess(dt: number): void {
@@ -1088,7 +1153,12 @@ export class UiManager extends Component {
         this.evolutionSuccessRoot = null;
     }
 
-    private playCardSound = (): void => this.playSfx('level-up-sfx');
+    private playTornadoSound = (): void => this.playSfx('tornado-sfx');
+
+    private shouldPlayBattleMusic(phase: GameState | undefined): boolean {
+        return phase === GameState.Battle || phase === GameState.Boss
+            || phase === GameState.LevelUp || phase === GameState.Dice || phase === GameState.Evolve;
+    }
 
     private playBattleMusic(): void {
         if (this.battleMusic?.clip && !this.battleMusic.playing) this.battleMusic.play();
@@ -1096,10 +1166,14 @@ export class UiManager extends Component {
 
     private stopBattleMusic(): void {
         if (this.battleMusic?.playing) this.battleMusic.stop();
+        for (const source of Object.values(this.soundSources)) source.stop();
     }
 
     private playSfx(name: string): void {
-        const clip = this.soundClips[name];
-        if (clip) this.battleMusic?.playOneShot(clip, 0.48);
+        const source = this.soundSources[name];
+        if (!source?.clip) return;
+        // Each effect has its own fixed gain. Repeated hits restart that channel
+        // instead of accumulating long overlapping tails and raising the mix level.
+        source.play();
     }
 }

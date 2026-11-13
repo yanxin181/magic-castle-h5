@@ -15,7 +15,7 @@ interface EnemyRuntime {
     lastAttackAt: number;
     slowUntil: number;
     slowMultiplier: number;
-    tornadoReaction: { age: number; damageClock: number; start: Vec3; target: Vec3; bubble: Node } | null;
+    tornadoReaction: { age: number; damageClock: number; start: Vec3; offset: Vec3; slot: number; bubble: Node } | null;
     healthFill: Node;
 }
 
@@ -51,6 +51,8 @@ export class BattleManager extends Component {
     private readonly tornadoDuration = 4;
     private readonly tornadoRadius = 175;
     private readonly tornadoRadiusY = 100;
+    private readonly tornadoReactionDelay = 0.5;
+    private readonly tornadoPullDuration = 1.35;
 
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.getComponent(GameManager);
@@ -377,7 +379,11 @@ export class BattleManager extends Component {
             const inRange = dx * dx + dy * dy <= 1;
             if (!enemy.tornadoReaction) {
                 if (!inRange) continue;
-                enemy.tornadoReaction = { age: 0, damageClock: 0, start: enemy.node.position.clone(), target: tornadoPosition.clone(), bubble: this.createQuestionBubble(enemy.node) };
+                const slot = this.chooseTornadoSlot(enemy.node.position, tornadoPosition);
+                const offset = slot < 0
+                    ? new Vec3((enemy.node.position.x - tornadoPosition.x) * 0.65, (enemy.node.position.y - tornadoPosition.y) * 0.65, 0)
+                    : this.tornadoSlotOffset(slot);
+                enemy.tornadoReaction = { age: 0, damageClock: 0, start: enemy.node.position.clone(), offset, slot, bubble: this.createQuestionBubble(enemy.node) };
             }
             const reaction = enemy.tornadoReaction;
             reaction.damageClock = inRange ? reaction.damageClock + activeDt : 0;
@@ -389,15 +395,41 @@ export class BattleManager extends Component {
             if (!this.gameManager?.isBattleActive) return;
             if (!enemy.node.isValid || !this.enemies.includes(enemy)) continue;
             reaction.age += activeDt;
-            if (reaction.age <= 0.42) continue;
-            const pull = Math.min(1, (reaction.age - 0.42) / (this.tornadoDuration - 0.42)) * 0.55;
-            const nextX = reaction.start.x + (reaction.target.x - reaction.start.x) * pull;
-            const nextY = reaction.start.y + (reaction.target.y - reaction.start.y) * pull;
+            if (reaction.age <= this.tornadoReactionDelay) continue;
+            const progress = Math.min(1, (reaction.age - this.tornadoReactionDelay) / this.tornadoPullDuration);
+            const pull = progress * progress * (3 - 2 * progress);
+            const nextX = reaction.start.x + (tornadoPosition.x + reaction.offset.x - reaction.start.x) * pull;
+            const nextY = reaction.start.y + (tornadoPosition.y + reaction.offset.y - reaction.start.y) * pull;
             enemy.node.setPosition(nextX, nextY);
             enemy.lane = nextX / this.corridorHalfWidth(nextY);
             this.updateEnemyDepth(enemy.node, nextY);
         }
         if (this.tornadoAge >= this.tornadoDuration) this.destroyTornado();
+    }
+
+    private chooseTornadoSlot(start: Readonly<Vec3>, center: Readonly<Vec3>): number {
+        const occupied = new Set(this.enemies.map((enemy) => enemy.tornadoReaction?.slot).filter((slot): slot is number => slot !== undefined));
+        let bestSlot = -1;
+        let bestDistance = Infinity;
+        // 优先排在内圈；同一圈选离怪物原位置最近的空位，避免穿过中心交叉。
+        for (let slot = 0; slot < 12; slot++) {
+            if (slot === 4 && bestDistance < Infinity) break;
+            if (occupied.has(slot)) continue;
+            const offset = this.tornadoSlotOffset(slot);
+            const distance = (start.x - center.x - offset.x) ** 2 + (start.y - center.y - offset.y) ** 2;
+            if (distance >= bestDistance) continue;
+            bestDistance = distance;
+            bestSlot = slot;
+        }
+        return bestSlot;
+    }
+
+    private tornadoSlotOffset(slot: number): Vec3 {
+        const inner = slot < 4;
+        const count = inner ? 4 : 8;
+        const index = inner ? slot : (slot - 4) % count;
+        const angle = (index + (inner ? 0 : 0.5)) * Math.PI * 2 / count;
+        return new Vec3(Math.cos(angle) * (inner ? 60 : 150), Math.sin(angle) * (inner ? 40 : 86), 0);
     }
 
     private damageEnemyWithTornado(enemy: EnemyRuntime): void {
@@ -436,6 +468,7 @@ export class BattleManager extends Component {
         if (this.tornadoFrames[0]) sprite.spriteFrame = this.tornadoFrames[0];
         this.tornadoSprite = sprite;
         this.createTornadoSticker();
+        this.gameManager?.events.emit(GAME_EVENTS.tornadoCast);
     }
 
     private destroyTornado(): void {
@@ -456,19 +489,34 @@ export class BattleManager extends Component {
         parent.addChild(bubble);
         bubble.layer = this.node.layer;
         bubble.setPosition(24, 65);
-        bubble.addComponent(UITransform).setContentSize(30, 30);
+        bubble.addComponent(UITransform).setContentSize(36, 42);
         const graphics = bubble.addComponent(Graphics);
-        graphics.fillColor = new Color(255, 255, 255, 235);
-        graphics.circle(0, 0, 14);
+        graphics.fillColor = new Color(255, 255, 255, 250);
+        graphics.strokeColor = new Color(105, 82, 139, 255);
+        graphics.lineWidth = 2.5;
+        graphics.moveTo(-4, -12);
+        graphics.lineTo(-9, -21);
+        graphics.lineTo(3, -15);
+        graphics.close();
         graphics.fill();
+        graphics.moveTo(-4, -12);
+        graphics.lineTo(-9, -21);
+        graphics.lineTo(3, -15);
+        graphics.close();
+        graphics.stroke();
+        graphics.circle(0, 0, 16);
+        graphics.fill();
+        graphics.circle(0, 0, 16);
+        graphics.stroke();
         const text = new Node('Question');
         bubble.addChild(text);
         text.layer = this.node.layer;
-        text.addComponent(UITransform).setContentSize(30, 30);
+        text.addComponent(UITransform).setContentSize(36, 36);
         const label = text.addComponent(Label);
         label.string = '?';
-        label.fontSize = 20;
-        label.color = new Color(104, 79, 132, 255);
+        label.fontSize = 23;
+        label.isBold = true;
+        label.color = new Color(89, 67, 126, 255);
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
         label.verticalAlign = Label.VerticalAlign.CENTER;
         return bubble;

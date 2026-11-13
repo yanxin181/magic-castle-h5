@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "ES2015",
+    "strict": true,
+    "experimentalDecorators": true,
+    "moduleResolution": "node",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["assets/scripts/**/*.ts", "temp/declarations/**/*.d.ts"]
+}

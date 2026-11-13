@@ -10,7 +10,7 @@
   var cardPanel = document.getElementById('cardPanel'), cardGrid = document.getElementById('cardGrid');
   var diceResult = document.getElementById('diceResult'), victoryPanel = document.getElementById('victoryPanel');
   var diceTimer = null, diceFinishTimer = null, diceToken = 0;
-  var luckyDiceMessages = ['幸运降临！', '好运加倍！', '你就是天选之人！', '星辉眷顾你！', '好运正在发光！'];
+  var luckyDiceMessages = ['幸运降临！', '好运加倍！', '你就是天选之人！', '系统：这手气合理吗？', '欧皇来了都得排你后面！'];
   var downloadButton = document.getElementById('downloadButton'), tornadoSkillHud = document.getElementById('tornadoSkillHud'), tornadoSkillIcon = document.getElementById('tornadoSkillIcon'), tornadoSkillCooldown = document.getElementById('tornadoSkillCooldown'), tornadoSkillStatus = document.getElementById('tornadoSkillStatus'), thresholds = [30, 70, 120, 180];
   var monsterBalance = {
     normalHp: 3,
@@ -55,6 +55,8 @@
     cooldown: 7,
     frameDuration: .5,
     duration: 4,
+    reactionDelay: .5,
+    pullDuration: 1.35,
     startDepth: .52,
     swayPixels: 28,
     swayCycles: 1.25,
@@ -120,17 +122,18 @@
       if (!reaction) {
         var distance = Math.hypot(monster.x - tornado.x, monster.y - tornado.y);
         if (distance > tornadoConfig.pullRadius) return;
-        var targetT = clamp01((tornado.y - battlefieldPath.farY) / (battlefieldPath.nearY - battlefieldPath.farY));
-        var targetLaneWidth = (lerp(battlefieldPath.farRight, battlefieldPath.nearRight, targetT) - lerp(battlefieldPath.farLeft, battlefieldPath.nearLeft, targetT)) * .42;
-        var targetOffset = (tornado.x - laneMetrics(targetT, 0).x) / targetLaneWidth;
-        reaction = tornado.reactions[monster.id] = { age: 0, startT: monster.t, startLaneOffset: monster.laneOffset, targetT: targetT, targetLaneOffset: targetOffset };
+        reaction = tornado.reactions[monster.id] = { age: 0, startT: monster.t, startLaneOffset: monster.laneOffset };
         monster.tornadoReaction = reaction;
       }
       reaction.age += dt;
-      if (reaction.age <= .42) return;
-      var pullProgress = clamp01((reaction.age - .42) / (tornadoConfig.duration - .42)) * .42;
-      monster.t = lerp(reaction.startT, reaction.targetT, pullProgress);
-      monster.laneOffset = lerp(reaction.startLaneOffset, reaction.targetLaneOffset, pullProgress);
+      if (reaction.age <= tornadoConfig.reactionDelay) return;
+      var progress = clamp01((reaction.age - tornadoConfig.reactionDelay) / tornadoConfig.pullDuration);
+      var pullProgress = progress * progress * (3 - 2 * progress);
+      var targetT = clamp01((tornado.y - battlefieldPath.farY) / (battlefieldPath.nearY - battlefieldPath.farY));
+      var targetLaneWidth = (lerp(battlefieldPath.farRight, battlefieldPath.nearRight, targetT) - lerp(battlefieldPath.farLeft, battlefieldPath.nearLeft, targetT)) * .42;
+      var targetOffset = (tornado.x - laneMetrics(targetT, 0).x) / targetLaneWidth;
+      monster.t = lerp(reaction.startT, targetT, pullProgress);
+      monster.laneOffset = lerp(reaction.startLaneOffset, targetOffset, pullProgress);
       updateMonsterPose(monster);
     });
   }
@@ -518,13 +521,13 @@
   function drawMonsterReactions() {
     state.monsters.forEach(function (monster) {
       var reaction = monster.tornadoReaction;
-      if (!reaction || reaction.age < .14 || !state.tornado || monster.boss) return;
+      if (!reaction || !state.tornado || monster.boss) return;
       var bubbleX = monster.x + monster.r * .72, bubbleY = monster.y - monster.r - 18;
       ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.strokeStyle = 'rgba(92,71,117,.75)'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(bubbleX, bubbleY, 12, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(bubbleX - 3, bubbleY + 10); ctx.lineTo(bubbleX - 6, bubbleY + 16); ctx.lineTo(bubbleX + 2, bubbleY + 11); ctx.fill();
-      ctx.fillStyle = '#684f84'; ctx.font = 'bold 17px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', bubbleX, bubbleY + 1);
+      ctx.fillStyle = 'rgba(255,255,255,.98)'; ctx.strokeStyle = '#69528b'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(bubbleX - 4, bubbleY + 12); ctx.lineTo(bubbleX - 9, bubbleY + 21); ctx.lineTo(bubbleX + 3, bubbleY + 15); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(bubbleX, bubbleY, 16, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#59437e'; ctx.font = 'bold 23px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('?', bubbleX, bubbleY + 1);
       ctx.restore();
     });
   }

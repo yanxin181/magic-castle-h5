@@ -13,6 +13,7 @@ export const GAME_EVENTS = {
     cardApplied: 'card-applied',
     heroEvolved: 'hero-evolved',
     skillChanged: 'tornado-skill-changed',
+    tornadoCast: 'tornado-cast',
     attackFired: 'hero-attack-fired',
     gameOver: 'game-over',
     victory: 'victory',
