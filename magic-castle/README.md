@@ -13,6 +13,8 @@
 
 ## 打开方式
 
+浏览器试玩：直接打开 `preview/index.html`。龙卷风技能及贴纸效果在该预览目录内维护。
+
 使用 Cocos Creator 3.8.4 打开当前目录：
 
 D:/AAA/06test/17game/magic-castle

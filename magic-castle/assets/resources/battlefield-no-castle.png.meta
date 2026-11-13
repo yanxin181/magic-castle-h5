@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "1622540b-93d2-4f90-aa48-a858c6dfbc5f",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "displayName": "battlefield-no-castle",
+      "name": "texture",
+      "imported": true,
+      "id": "6c48a",
+      "uuid": "1622540b-93d2-4f90-aa48-a858c6dfbc5f@6c48a",
+      "userData": {
+        "mipfilter": "none",
+        "visible": false,
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "1622540b-93d2-4f90-aa48-a858c6dfbc5f",
+        "wrapModeT": "repeat",
+        "magfilter": "linear",
+        "wrapModeS": "repeat",
+        "minfilter": "linear"
+      },
+      "ver": "1.0.22",
+      "files": [
+        ".json"
+      ],
+      "importer": "texture",
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "hasAlpha": false,
+    "type": "texture",
+    "fixAlphaTransparencyArtifacts": false,
+    "redirect": "1622540b-93d2-4f90-aa48-a858c6dfbc5f@6c48a"
+  }
+}

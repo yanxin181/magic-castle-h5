@@ -34,7 +34,10 @@ export interface EnemyData {
     lane?: number;
 }
 
-export const EVOLUTION_THRESHOLDS = [30, 70, 120, 180] as const;
+// Cumulative XP requirements: 4 / 6 / 8 / 10 normal-enemy kills between upgrades.
+// The longer gaps let each picked card and the tornado sequence play out before
+// the next level-up choice interrupts combat.
+export const EVOLUTION_THRESHOLDS = [40, 100, 180, 280] as const;
 
 export const RECT = {
     screen: { x: 0, y: 0, width: 1280, height: 720 },

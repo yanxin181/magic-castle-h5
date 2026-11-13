@@ -1,4 +1,4 @@
-import { Camera, Color, Component, Graphics, Label, Layers, Node, Sprite, SpriteFrame, Texture2D, UITransform, Vec3, _decorator, resources, tween } from 'cc';
+import { Camera, Color, Component, Graphics, Label, Layers, Node, Sprite, SpriteFrame, Texture2D, UITransform, Vec2, Vec3, _decorator, resources, tween } from 'cc';
 import { GAME_EVENTS, GameManager } from './GameManager';
 import { GameState } from './types';
 
@@ -15,7 +15,7 @@ interface EnemyRuntime {
     lastAttackAt: number;
     slowUntil: number;
     slowMultiplier: number;
-    tornadoAge: number;
+    tornadoReaction: { age: number; damageClock: number; start: Vec3; target: Vec3; bubble: Node } | null;
     healthFill: Node;
 }
 
@@ -24,7 +24,7 @@ export class BattleManager extends Component {
     @property(Node) enemyRoot: Node | null = null;
     @property(Node) player: Node | null = null;
     @property(GameManager) gameManager: GameManager | null = null;
-    @property({ tooltip: '一级刷怪间隔（秒）' }) spawnInterval = 0.9;
+    @property({ tooltip: '一级刷怪间隔（秒）' }) spawnInterval = 1;
     @property({ tooltip: '普通怪生命值' }) normalEnemyHp = 30;
     @property({ tooltip: 'BOSS 生命值' }) bossHp = 240;
 
@@ -35,6 +35,8 @@ export class BattleManager extends Component {
     private serial = 0;
     private waveStarted = false;
     private tornado: Node | null = null;
+    private tornadoSprite: Sprite | null = null;
+    private tornadoSticker: Node | null = null;
     private tornadoAge = 0;
     private lastSkillStatus = '';
     private readonly enemies: EnemyRuntime[] = [];
@@ -45,9 +47,10 @@ export class BattleManager extends Component {
     private readonly nearHalfWidth = 500;
     private readonly farScale = 0.45;
     private readonly nearScale = 1.35;
-    private readonly tornadoCooldown = 7;
+    private readonly tornadoCooldown = 5;
     private readonly tornadoDuration = 4;
-    private readonly tornadoRadius = 150;
+    private readonly tornadoRadius = 175;
+    private readonly tornadoRadiusY = 100;
 
     onLoad(): void {
         this.gameManager = this.gameManager ?? this.node.getComponent(GameManager);
@@ -140,7 +143,7 @@ export class BattleManager extends Component {
             lastAttackAt: -Infinity,
             slowUntil: 0,
             slowMultiplier: 1,
-            tornadoAge: 0,
+            tornadoReaction: null,
             healthFill,
         };
         const spawnY = this.topY + extraDelay * 55;
@@ -181,10 +184,13 @@ export class BattleManager extends Component {
         const fill = new Node('Fill');
         root.addChild(fill);
         fill.layer = this.node.layer;
-        fill.addComponent(UITransform).setContentSize(width, 7);
+        const fillTransform = fill.addComponent(UITransform);
+        fillTransform.setContentSize(width, 7);
+        fillTransform.setAnchorPoint(new Vec2(0, 0.5));
+        fill.setPosition(-width / 2, 0);
         const fillGraphic = fill.addComponent(Graphics);
         fillGraphic.fillColor = isBoss ? new Color(246, 137, 169, 255) : new Color(125, 223, 181, 255);
-        fillGraphic.roundRect(-width / 2, -3.5, width, 7, 3.5);
+        fillGraphic.roundRect(0, -3.5, width, 7, 3.5);
         fillGraphic.fill();
         return fill;
     }
@@ -203,7 +209,7 @@ export class BattleManager extends Component {
     }
 
     private moveEnemy(enemy: EnemyRuntime, dt: number): void {
-        if (!enemy.node.isValid || (enemy.tornadoAge > 0 && enemy.tornadoAge <= 0.42)) return;
+        if (!enemy.node.isValid || enemy.tornadoReaction) return;
         const current = enemy.node.position;
         const speedMultiplier = enemy.slowUntil > this.elapsed ? enemy.slowMultiplier : 1;
         const nextY = current.y - enemy.speed * speedMultiplier * dt;
@@ -340,28 +346,67 @@ export class BattleManager extends Component {
     }
 
     private updateTornado(dt: number): void {
-        if (!this.tornado && this.skillClock >= this.tornadoCooldown) this.launchTornado();
-        if (!this.tornado) return;
-        this.tornadoAge += dt;
-        if (this.tornadoAge >= this.tornadoDuration) {
-            this.destroyTornado();
+        if (!this.tornado && this.skillClock >= this.tornadoCooldown) {
+            this.launchTornado();
+            this.updateTornado(0);
             return;
         }
-        const tornadoPosition = new Vec3(Math.sin(this.tornadoAge * Math.PI * 2 * 1.25 / this.tornadoDuration) * 28, 20, 0);
+        if (!this.tornado) return;
+        const activeDt = Math.min(dt, this.tornadoDuration - this.tornadoAge);
+        this.tornadoAge += activeDt;
+        const tornadoPosition = new Vec3(Math.sin(this.tornadoAge * Math.PI * 2 * 1.25 / this.tornadoDuration) * 28, (this.player?.position.y ?? -185) + 240, 0);
         this.tornado.setPosition(tornadoPosition);
-        const sprite = this.tornado.getComponent(Sprite);
-        const frame = this.tornadoFrames[Math.min(this.tornadoFrames.length - 1, Math.floor(this.tornadoAge / 0.5))];
-        if (sprite && frame) sprite.spriteFrame = frame;
-        for (const enemy of this.enemies) {
-            if (enemy.isBoss || !enemy.node.isValid || Vec3.distance(enemy.node.position, tornadoPosition) > this.tornadoRadius) continue;
-            enemy.tornadoAge += dt;
-            if (enemy.tornadoAge <= 0.42) continue;
-            const position = enemy.node.position;
-            const pull = Math.min(1, dt * 1.9);
-            const nextY = position.y + (tornadoPosition.y - position.y) * pull;
-            enemy.node.setPosition(position.x + (tornadoPosition.x - position.x) * pull, nextY);
+        const frameIndex = this.tornadoAge < 0.5
+            ? Math.floor(this.tornadoAge / 0.25)
+            : this.tornadoAge < this.tornadoDuration - 0.5
+                ? 2 + Math.floor((this.tornadoAge - 0.5) / 0.15) % 4
+                : Math.min(7, 6 + Math.floor((this.tornadoAge - (this.tornadoDuration - 0.5)) / 0.25));
+        const frame = this.tornadoFrames[frameIndex];
+        if (this.tornadoSprite && frame) this.tornadoSprite.spriteFrame = frame;
+        if (this.tornadoSticker?.isValid) {
+            const progress = Math.min(1, this.tornadoAge / 0.7);
+            const scale = progress < 0.65 ? 0.15 + progress / 0.65 * 1.1 : 1.25 - (progress - 0.65) / 0.35 * 0.25;
+            this.tornadoSticker.setScale(scale, scale, 1);
+            const sway = Math.max(0, this.tornadoAge - 0.7);
+            this.tornadoSticker.angle = Math.sin(sway * 4) * 5;
+        }
+        for (const enemy of [...this.enemies]) {
+            if (enemy.isBoss || !enemy.node.isValid) continue;
+            const dx = (enemy.node.position.x - tornadoPosition.x) / this.tornadoRadius;
+            const dy = (enemy.node.position.y - tornadoPosition.y) / this.tornadoRadiusY;
+            const inRange = dx * dx + dy * dy <= 1;
+            if (!enemy.tornadoReaction) {
+                if (!inRange) continue;
+                enemy.tornadoReaction = { age: 0, damageClock: 0, start: enemy.node.position.clone(), target: tornadoPosition.clone(), bubble: this.createQuestionBubble(enemy.node) };
+            }
+            const reaction = enemy.tornadoReaction;
+            reaction.damageClock = inRange ? reaction.damageClock + activeDt : 0;
+            while (reaction.damageClock >= 1 && enemy.node.isValid && this.enemies.includes(enemy)) {
+                reaction.damageClock -= 1;
+                this.damageEnemyWithTornado(enemy);
+            }
+            // 击杀可能立即触发升级；其余敌人等战斗恢复后再结算。
+            if (!this.gameManager?.isBattleActive) return;
+            if (!enemy.node.isValid || !this.enemies.includes(enemy)) continue;
+            reaction.age += activeDt;
+            if (reaction.age <= 0.42) continue;
+            const pull = Math.min(1, (reaction.age - 0.42) / (this.tornadoDuration - 0.42)) * 0.55;
+            const nextX = reaction.start.x + (reaction.target.x - reaction.start.x) * pull;
+            const nextY = reaction.start.y + (reaction.target.y - reaction.start.y) * pull;
+            enemy.node.setPosition(nextX, nextY);
+            enemy.lane = nextX / this.corridorHalfWidth(nextY);
             this.updateEnemyDepth(enemy.node, nextY);
         }
+        if (this.tornadoAge >= this.tornadoDuration) this.destroyTornado();
+    }
+
+    private damageEnemyWithTornado(enemy: EnemyRuntime): void {
+        enemy.hp -= 3;
+        enemy.healthFill.setScale(Math.max(0, enemy.hp / enemy.maxHp), 1, 1);
+        this.showDamageFloat(enemy.node.position, 3, false);
+        if (enemy.hp > 0) return;
+        this.removeEnemy(enemy);
+        this.gameManager?.gainExperience();
     }
 
     private launchTornado(): void {
@@ -370,30 +415,82 @@ export class BattleManager extends Component {
         this.tornado = new Node('Tornado');
         this.node.addChild(this.tornado);
         this.tornado.layer = this.node.layer;
-        this.tornado.setPosition(0, 20);
-        this.tornado.addComponent(UITransform).setContentSize(220, 220);
-        const sprite = this.tornado.addComponent(Sprite);
+        this.tornado.setPosition(0, (this.player?.position.y ?? -185) + 240);
+        if (this.player?.parent === this.node) this.tornado.setSiblingIndex(this.player.getSiblingIndex());
+        this.tornado.addComponent(UITransform).setContentSize(this.tornadoRadius * 2, this.tornadoRadius * 2);
+        const range = this.tornado.addComponent(Graphics);
+        range.fillColor = new Color(204, 244, 255, 18);
+        range.ellipse(0, 0, this.tornadoRadius, this.tornadoRadiusY);
+        range.fill();
+        range.strokeColor = new Color(220, 249, 255, 45);
+        range.lineWidth = 2;
+        range.ellipse(0, 0, this.tornadoRadius, this.tornadoRadiusY);
+        range.stroke();
+        const visual = new Node('TornadoVisual');
+        this.tornado.addChild(visual);
+        visual.layer = this.node.layer;
+        visual.setPosition(0, 65);
+        visual.addComponent(UITransform).setContentSize(220, 220);
+        const sprite = visual.addComponent(Sprite);
         sprite.sizeMode = Sprite.SizeMode.CUSTOM;
         if (this.tornadoFrames[0]) sprite.spriteFrame = this.tornadoFrames[0];
-        else this.drawTornadoFallback(this.tornado);
-        for (const enemy of this.enemies) enemy.tornadoAge = 0;
+        this.tornadoSprite = sprite;
+        this.createTornadoSticker();
     }
 
     private destroyTornado(): void {
         if (this.tornado?.isValid) this.tornado.destroy();
+        if (this.tornadoSticker?.isValid) this.tornadoSticker.destroy();
         this.tornado = null;
+        this.tornadoSprite = null;
+        this.tornadoSticker = null;
         this.tornadoAge = 0;
-        for (const enemy of this.enemies) enemy.tornadoAge = 0;
+        for (const enemy of this.enemies) {
+            if (enemy.tornadoReaction?.bubble.isValid) enemy.tornadoReaction.bubble.destroy();
+            enemy.tornadoReaction = null;
+        }
     }
 
-    private drawTornadoFallback(node: Node): void {
-        const graphics = node.addComponent(Graphics);
-        graphics.strokeColor = new Color(193, 239, 255, 220);
-        graphics.lineWidth = 10;
-        for (let i = 0; i < 4; i++) {
-            graphics.ellipse(0, 55 - i * 30, 30 + i * 15, 8 + i * 4);
-            graphics.stroke();
-        }
+    private createQuestionBubble(parent: Node): Node {
+        const bubble = new Node('TornadoQuestion');
+        parent.addChild(bubble);
+        bubble.layer = this.node.layer;
+        bubble.setPosition(24, 65);
+        bubble.addComponent(UITransform).setContentSize(30, 30);
+        const graphics = bubble.addComponent(Graphics);
+        graphics.fillColor = new Color(255, 255, 255, 235);
+        graphics.circle(0, 0, 14);
+        graphics.fill();
+        const text = new Node('Question');
+        bubble.addChild(text);
+        text.layer = this.node.layer;
+        text.addComponent(UITransform).setContentSize(30, 30);
+        const label = text.addComponent(Label);
+        label.string = '?';
+        label.fontSize = 20;
+        label.color = new Color(104, 79, 132, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        return bubble;
+    }
+
+    private createTornadoSticker(): void {
+        const sticker = new Node('TornadoSticker');
+        this.node.addChild(sticker);
+        sticker.layer = this.node.layer;
+        sticker.setPosition((this.player?.position.x ?? 0) + 115, (this.player?.position.y ?? -185) + 145);
+        sticker.setScale(0.15, 0.15, 1);
+        if (this.player?.parent === this.node) sticker.setSiblingIndex(this.player.getSiblingIndex() + 1);
+        sticker.addComponent(UITransform).setContentSize(170, 119);
+        const sprite = sticker.addComponent(Sprite);
+        sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+        this.tornadoSticker = sticker;
+        resources.load('tornado-sticker/texture', Texture2D, (error, texture) => {
+            if (error || !texture || !sticker.isValid) return;
+            const frame = new SpriteFrame();
+            frame.texture = texture;
+            sprite.spriteFrame = frame;
+        });
     }
 
     private loadTornadoFrames(): void {
@@ -410,7 +507,7 @@ export class BattleManager extends Component {
 
     private notifySkillStatus(force = false): void {
         const active = !!this.tornado;
-        const remaining = active ? 0 : Math.max(0, this.tornadoCooldown - this.skillClock);
+        const remaining = Math.max(0, this.tornadoCooldown - this.skillClock);
         const signature = `${active}:${remaining.toFixed(1)}`;
         if (!force && signature === this.lastSkillStatus) return;
         this.lastSkillStatus = signature;

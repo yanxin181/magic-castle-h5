@@ -5,6 +5,7 @@ const { ccclass, property } = _decorator;
 
 export const GAME_EVENTS = {
     healthChanged: 'castle-health-changed',
+    castleDamaged: 'castle-damaged',
     experienceChanged: 'experience-changed',
     levelChanged: 'level-changed',
     phaseChanged: 'game-phase-changed',
@@ -47,6 +48,11 @@ export interface UpgradeCard {
     remaining: number;
 }
 
+export interface DiceRollResult {
+    value: number;
+    cards: readonly UpgradeCard[];
+}
+
 const createAttackStats = (): AttackStats => ({
     damageBonus: 0,
     comboBonus: 0,
@@ -79,7 +85,7 @@ export class GameManager extends Component {
     health = 100;
     level = 1;
     experience = 0;
-    experienceToNext = EVOLUTION_THRESHOLDS[0];
+    experienceToNext: number = EVOLUTION_THRESHOLDS[0];
     phase = GameState.Start;
     heroEvolved = false;
     bossSpawned = false;
@@ -87,6 +93,7 @@ export class GameManager extends Component {
 
     private cards: UpgradeCard[] = createCardPool();
     private choices: UpgradeCard[] = [];
+    private rolledRewards: DiceRollResult | null = null;
 
     get isGameOver(): boolean {
         return this.phase === GameState.Defeat || this.phase === GameState.Victory;
@@ -98,6 +105,10 @@ export class GameManager extends Component {
 
     get cardChoices(): readonly UpgradeCard[] {
         return this.choices;
+    }
+
+    get diceResult(): DiceRollResult | null {
+        return this.rolledRewards;
     }
 
     onLoad(): void {
@@ -122,6 +133,7 @@ export class GameManager extends Component {
         if (!this.isBattleActive || value <= 0) return;
         this.health = Math.max(0, this.health - value);
         this.events.emit(GAME_EVENTS.healthChanged, this.health, this.maxHealth);
+        this.events.emit(GAME_EVENTS.castleDamaged, value);
         if (this.health === 0) {
             this.setPhase(GameState.Defeat);
             this.events.emit(GAME_EVENTS.gameOver);
@@ -155,7 +167,28 @@ export class GameManager extends Component {
         if (this.phase !== GameState.LevelUp || (this.level !== 3 && this.level !== 5)) return false;
         const available = this.cards.filter((card) => card.remaining > 0);
         if (available.length === 0) return false;
-        this.applyCard(available[Math.floor(Math.random() * available.length)]);
+        // 4/5/6 的总概率由 highValueProbability 控制；组内点数等概率。
+        const highValueProbability = 0.7;
+        const value = Math.random() < highValueProbability
+            ? 4 + Math.floor(Math.random() * 3)
+            : 1 + Math.floor(Math.random() * 3);
+        const count = Math.min(value >= 4 ? 2 : 1, available.length);
+        const cards: UpgradeCard[] = [];
+        for (let i = 0; i < count; i++) {
+            const index = Math.floor(Math.random() * available.length);
+            cards.push(available.splice(index, 1)[0]);
+        }
+        this.rolledRewards = { value, cards };
+        this.setPhase(GameState.Dice);
+        return true;
+    }
+
+    claimDiceRewards(): boolean {
+        if (this.phase !== GameState.Dice || !this.rolledRewards) return false;
+        const rewards = this.rolledRewards.cards;
+        this.rolledRewards = null;
+        rewards.forEach((card) => this.grantCard(card));
+        this.finishUpgrade();
         return true;
     }
 
@@ -178,11 +211,19 @@ export class GameManager extends Component {
 
     private applyCard(card: UpgradeCard): void {
         if (card.remaining <= 0) return;
+        this.grantCard(card);
+        this.finishUpgrade();
+    }
+
+    private grantCard(card: UpgradeCard): void {
         card.effects.forEach((effect) => { this.attackStats[effect.key] += effect.value; });
         card.remaining -= 1;
+        this.events.emit(GAME_EVENTS.cardApplied, card);
+    }
+
+    private finishUpgrade(): void {
         this.choices = [];
         this.events.emit(GAME_EVENTS.cardChoicesChanged, this.choices);
-        this.events.emit(GAME_EVENTS.cardApplied, card);
         if (this.level === 4 && !this.heroEvolved) {
             this.setPhase(GameState.Evolve);
             return;
@@ -209,6 +250,7 @@ export class GameManager extends Component {
         this.bossSpawned = false;
         this.cards = createCardPool();
         this.choices = [];
+        this.rolledRewards = null;
         Object.assign(this.attackStats, createAttackStats());
     }
 

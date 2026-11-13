@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "857ea9c8-1697-4f81-9b8b-f148d163f69f",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "name": "texture",
+      "uuid": "857ea9c8-1697-4f81-9b8b-f148d163f69f@6c48a",
+      "id": "6c48a",
+      "files": [
+        ".json"
+      ],
+      "ver": "1.0.22",
+      "subMetas": {},
+      "importer": "texture",
+      "userData": {
+        "wrapModeS": "repeat",
+        "isUuid": true,
+        "anisotropy": 0,
+        "wrapModeT": "repeat",
+        "mipfilter": "none",
+        "minfilter": "linear",
+        "visible": false,
+        "magfilter": "linear",
+        "imageUuidOrDatabaseUri": "857ea9c8-1697-4f81-9b8b-f148d163f69f"
+      },
+      "imported": true,
+      "displayName": "hero-evolved-attack-01"
+    }
+  },
+  "userData": {
+    "type": "texture",
+    "hasAlpha": true,
+    "redirect": "857ea9c8-1697-4f81-9b8b-f148d163f69f@6c48a",
+    "fixAlphaTransparencyArtifacts": false
+  }
+}

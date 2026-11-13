@@ -30,11 +30,34 @@ button { font: inherit; }
 .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
 .skill-card { min-height: 130px; padding: 16px 12px; border: 1px solid rgba(255,255,255,.32); border-radius: 18px; color: #fff8ef; background: linear-gradient(160deg, rgba(211,174,255,.26), rgba(70,49,106,.68)); cursor: pointer; text-align: left; transition: transform .16s ease, border-color .16s ease, background .16s ease; }
 .skill-card:hover { transform: translateY(-4px); border-color: #ffe29a; background: linear-gradient(160deg, rgba(255,213,161,.32), rgba(104,61,117,.78)); }
+.skill-card.is-selected { border-color: #ffe29a; background: linear-gradient(160deg, rgba(255,213,161,.38), rgba(104,61,117,.85)); box-shadow: 0 0 0 2px rgba(255,226,154,.55); }
 .skill-card strong, .skill-card span { display: block; }
 .skill-card strong { margin-bottom: 10px; font-size: 17px; }
 .skill-card span { color: #e4d9f1; font-size: 13px; line-height: 1.5; }
 .dice-card { border-color: #ffd46b; background: linear-gradient(160deg, rgba(250,177,105,.38), rgba(128,61,99,.78)); }
 .dice-result { min-height: 1.5em; margin: 14px 0 0; color: #ffe49b; font-weight: 700; }
+.card-grid.dice-view, .card-grid.reward-view { display: flex; justify-content: center; align-items: center; gap: 18px; }
+.card-grid.dice-view { min-height: 150px; }
+.card-grid.reward-view .reward-card { width: min(31%, 220px); min-height: 120px; cursor: default; }
+.card-grid.reward-view .reward-card:hover { transform: none; }
+.rolled-die { width: 94px; height: 94px; flex: 0 0 94px; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 3px; padding: 15px; border: 3px solid #d7a457; border-radius: 18px; background: #fff5da; box-shadow: 0 9px 25px rgba(255,220,130,.3); }
+.die-pip { visibility: hidden; place-self: center; width: 13px; height: 13px; border-radius: 50%; background: #67408a; }
+.die-pip.is-visible { visibility: visible; }
+.rolled-die.is-rolling { animation: dice-tumble .3s ease-in-out infinite alternate; }
+.claim-button { margin-top: 12px; }
+.claim-button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+.claim-button:disabled:hover { transform: none; filter: none; }
+@keyframes dice-tumble { from { transform: rotate(-15deg) scale(.94); } to { transform: rotate(15deg) scale(1.06); } }
+.lucky-die-burst { position: relative; width: 94px; height: 94px; flex: 0 0 94px; }
+.lucky-die-burst::before { content: ''; position: absolute; inset: 4px; border: 4px solid #ffe49b; border-radius: 50%; pointer-events: none; animation: lucky-ring .5s ease-out forwards; }
+.lucky-sparkle { position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; background: #fff0a5; box-shadow: 0 0 12px #ffe49b; pointer-events: none; animation: lucky-spark .55s ease-out forwards; }
+.lucky-reward { animation: lucky-card-pop .3s ease-out backwards; }
+.dice-result.is-lucky .lucky-headline { display: block; font-size: clamp(22px, 3vw, 29px); color: #fff0b6; animation: lucky-card-pop .35s ease-out both; }
+.dice-result.is-lucky .lucky-detail { display: block; margin-top: 3px; color: #fff8e0; font-size: 15px; }
+.dice-result.is-lucky .claim-button { display: block; margin: 12px auto 0; }
+@keyframes lucky-ring { from { transform: scale(.6); opacity: 1; } to { transform: scale(1.7); opacity: 0; } }
+@keyframes lucky-spark { from { transform: translate(-50%, -50%) rotate(45deg) scale(.5); opacity: 1; } to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) rotate(45deg) scale(.7); opacity: 0; } }
+@keyframes lucky-card-pop { from { transform: scale(.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .victory-card { max-width: 500px; }
 .victory-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .rotate-hint { display: none; margin: 10px 0 0; color: #ffe0a0; text-align: center; font-size: 13px; }
@@ -45,6 +68,11 @@ button { font: inherit; }
 }
 @media (max-width: 680px) {
   .card-grid { gap: 8px; }
+  .card-grid.reward-view { gap: 7px; }
+  .card-grid.reward-view .reward-card { width: 31%; padding: 8px; }
+  .lucky-die-burst { width: 56px; height: 56px; flex-basis: 56px; }
+  .rolled-die { width: 56px; height: 56px; flex-basis: 56px; gap: 2px; padding: 8px; border-radius: 12px; }
+  .die-pip { width: 8px; height: 8px; }
   .skill-card { min-height: 112px; padding: 12px 9px; }
   .skill-card strong { font-size: 14px; }
   .skill-card span { font-size: 11px; }

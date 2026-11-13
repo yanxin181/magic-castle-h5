@@ -1,0 +1,42 @@
+{
+  "ver": "1.0.27",
+  "importer": "image",
+  "imported": true,
+  "uuid": "c5cc8730-e952-4511-bc60-1b7f00f071a8",
+  "files": [
+    ".json",
+    ".png"
+  ],
+  "subMetas": {
+    "6c48a": {
+      "displayName": "castle-foreground",
+      "name": "texture",
+      "imported": true,
+      "id": "6c48a",
+      "uuid": "c5cc8730-e952-4511-bc60-1b7f00f071a8@6c48a",
+      "userData": {
+        "mipfilter": "none",
+        "visible": false,
+        "anisotropy": 0,
+        "isUuid": true,
+        "imageUuidOrDatabaseUri": "c5cc8730-e952-4511-bc60-1b7f00f071a8",
+        "wrapModeT": "repeat",
+        "magfilter": "linear",
+        "wrapModeS": "repeat",
+        "minfilter": "linear"
+      },
+      "ver": "1.0.22",
+      "files": [
+        ".json"
+      ],
+      "importer": "texture",
+      "subMetas": {}
+    }
+  },
+  "userData": {
+    "hasAlpha": true,
+    "type": "texture",
+    "fixAlphaTransparencyArtifacts": false,
+    "redirect": "c5cc8730-e952-4511-bc60-1b7f00f071a8@6c48a"
+  }
+}

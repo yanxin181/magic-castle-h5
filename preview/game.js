@@ -9,16 +9,30 @@
   var startCard = document.querySelector('.start-card');
   var cardPanel = document.getElementById('cardPanel'), cardGrid = document.getElementById('cardGrid');
   var diceResult = document.getElementById('diceResult'), victoryPanel = document.getElementById('victoryPanel');
+  var diceTimer = null, diceFinishTimer = null, diceToken = 0;
+  var luckyDiceMessages = ['幸运降临！', '好运加倍！', '你就是天选之人！', '星辉眷顾你！', '好运正在发光！'];
   var downloadButton = document.getElementById('downloadButton'), tornadoSkillHud = document.getElementById('tornadoSkillHud'), tornadoSkillIcon = document.getElementById('tornadoSkillIcon'), tornadoSkillCooldown = document.getElementById('tornadoSkillCooldown'), tornadoSkillStatus = document.getElementById('tornadoSkillStatus'), thresholds = [30, 70, 120, 180];
   var monsterBalance = {
     normalHp: 3,
     bossHp: 30,
     spawnInterval: function (level) { return Math.max(1.1, 1.3 - Math.max(0, level - 1) * .05); }
   };
-  var battlefieldImage = new Image(), battlefieldImageReady = false;
+  var battlefieldImage = new Image(), battlefieldImageReady = false, backgroundView = null;
   battlefieldImage.onload = function () { battlefieldImageReady = true; draw(); };
   battlefieldImage.onerror = function () { battlefieldImageReady = false; };
-  battlefieldImage.src = 'battlefield-background.png';
+  battlefieldImage.src = 'battlefield-no-castle.png';
+  var castleImage = new Image(), castleTint = document.createElement('canvas'), castleImageReady = false;
+  castleImage.onload = function () {
+    castleImageReady = true;
+    castleTint.width = castleImage.naturalWidth; castleTint.height = castleImage.naturalHeight;
+    var tint = castleTint.getContext('2d');
+    tint.drawImage(castleImage, 0, 0);
+    tint.globalCompositeOperation = 'source-in';
+    tint.fillStyle = '#ff365a'; tint.fillRect(0, 0, castleTint.width, castleTint.height);
+    draw();
+  };
+  castleImage.src = 'castle-foreground.png';
+  var castleHitDuration = .46;
   var battleMusic = new Audio('battle-music.mp3'), battleMusicAlt = new Audio('battle-music.mp3');
   var musicTracks = [battleMusic, battleMusicAlt], musicGains = [], musicContext = null, musicActive = 0, musicCrossfading = false, musicStarted = false;
   var musicVolume = .26, musicCrossfadeSeconds = .8;
@@ -31,9 +45,12 @@
   var heroAttackFrames = ['hero-staff-01.png', 'hero-staff-02.png', 'hero-staff-03.png', 'hero-staff-04.png', 'hero-staff-05.png', 'hero-staff-06.png'].map(function (src) {
     var image = new Image(); image.onload = function () { draw(); }; image.src = src; return image;
   });
+  var evolvedAttackFrames = ['01', '02', '03', '04', '05', '06', '07', '08'].map(function (id) {
+    var image = new Image(); image.onload = function () { draw(); }; image.src = 'hero-evolved-attack-' + id + '.png'; return image;
+  });
   var heroAttackFrameDuration = .075;
   var heroAttackDuration = heroAttackFrameDuration * heroAttackFrames.length;
-  var basicAttackCooldown = heroAttackDuration;
+  var evolvedAttackDuration = heroAttackFrameDuration * evolvedAttackFrames.length;
   var tornadoConfig = {
     cooldown: 7,
     frameDuration: .5,
@@ -51,7 +68,7 @@
   var tornadoSticker = new Image(); tornadoSticker.onload = function () { draw(); }; tornadoSticker.src = 'tornado-sticker.png';
   var state = {
     phase: 'start', level: 1, xp: 0, kills: 0, nextXp: thresholds[0], monsters: [], projectiles: [], particles: [], impacts: [],
-    selectedSkill: 'tornado', selectedCardTitle: '', unlockedSkills: ['tornado'], upgraded: false, bossSpawned: false, elapsed: 0, spawnClock: 0, attackClock: 0, skillClock: 0, tornado: null, last: 0,
+    selectedSkill: 'tornado', selectedCardTitle: '', unlockedSkills: ['tornado'], upgraded: false, bossSpawned: false, elapsed: 0, spawnClock: 0, attackClock: 0, skillClock: 0, tornado: null, castleHitElapsed: -1, last: 0,
     attack: { damageBonus: 0, comboBonus: 0, scatterBonus: 0, critChance: 0, slowPercent: 0, slowDuration: 0, areaRadius: 0, areaMultiplier: 0 }, cardStacks: {},
     hero: { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false, attackElapsed: -1 }
   };
@@ -98,21 +115,22 @@
     }
     tornadoPose(tornado);
     state.monsters.forEach(function (monster) {
-      var distance = Math.hypot(monster.x - tornado.x, monster.y - tornado.y);
-      if (monster.boss || distance > tornadoConfig.pullRadius) return;
+      if (monster.boss) return;
       var reaction = tornado.reactions[monster.id];
       if (!reaction) {
-        reaction = tornado.reactions[monster.id] = { age: 0, startT: monster.t, startLaneOffset: monster.laneOffset };
+        var distance = Math.hypot(monster.x - tornado.x, monster.y - tornado.y);
+        if (distance > tornadoConfig.pullRadius) return;
+        var targetT = clamp01((tornado.y - battlefieldPath.farY) / (battlefieldPath.nearY - battlefieldPath.farY));
+        var targetLaneWidth = (lerp(battlefieldPath.farRight, battlefieldPath.nearRight, targetT) - lerp(battlefieldPath.farLeft, battlefieldPath.nearLeft, targetT)) * .42;
+        var targetOffset = (tornado.x - laneMetrics(targetT, 0).x) / targetLaneWidth;
+        reaction = tornado.reactions[monster.id] = { age: 0, startT: monster.t, startLaneOffset: monster.laneOffset, targetT: targetT, targetLaneOffset: targetOffset };
         monster.tornadoReaction = reaction;
       }
       reaction.age += dt;
       if (reaction.age <= .42) return;
-      var pullProgress = clamp01((reaction.age - .42) / Math.max(.01, tornadoConfig.duration - .42)) * .42;
-      var base = laneMetrics(monster.t, 0);
-      var laneWidth = Math.max(1, (lerp(battlefieldPath.farRight, battlefieldPath.nearRight, monster.t) - lerp(battlefieldPath.farLeft, battlefieldPath.nearLeft, monster.t)) * .42);
-      var targetOffset = Math.max(-.95, Math.min(.95, (tornado.x - base.x) / laneWidth));
-      monster.t = reaction.startT + (tornado.depth - reaction.startT) * pullProgress;
-      monster.laneOffset = reaction.startLaneOffset + (targetOffset - reaction.startLaneOffset) * pullProgress;
+      var pullProgress = clamp01((reaction.age - .42) / (tornadoConfig.duration - .42)) * .42;
+      monster.t = lerp(reaction.startT, reaction.targetT, pullProgress);
+      monster.laneOffset = lerp(reaction.startLaneOffset, reaction.targetLaneOffset, pullProgress);
       updateMonsterPose(monster);
     });
   }
@@ -153,13 +171,14 @@
   function recoverMusicFromGesture() { if (musicTracks[musicActive].paused) musicStarted = false; startBattleMusic(); }
   function resetWorld() {
     stopBattleMusic();
+    diceToken++; clearInterval(diceTimer); clearTimeout(diceFinishTimer);
     state.phase = 'start'; state.level = 1; state.xp = 0; state.kills = 0; state.nextXp = thresholds[0];
     state.monsters = []; state.projectiles = []; state.particles = []; state.impacts = []; state.floats = []; state.xpStars = []; state.selectedSkill = null; state.upgraded = false; state.bossSpawned = false;
-    state.elapsed = 0; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; state.tornado = null; state.floats = []; state.xpStars = []; state.unlockedSkills = ['tornado']; state.selectedSkill = 'tornado'; state.selectedCardTitle = ''; state.cardStacks = {};
+    state.elapsed = 0; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; state.tornado = null; state.castleHitElapsed = -1; state.floats = []; state.xpStars = []; state.unlockedSkills = ['tornado']; state.selectedSkill = 'tornado'; state.selectedCardTitle = ''; state.cardStacks = {};
     state.attack = { damageBonus: 0, comboBonus: 0, scatterBonus: 0, critChance: 0, slowPercent: 0, slowDuration: 0, areaRadius: 0, areaMultiplier: 0 };
     cardPool.forEach(function (card) { card.remaining = card.maxStacks; });
     state.hero = { x: W / 2, y: H - 126, hp: 100, maxHp: 100, upgraded: false, attackElapsed: -1 };
-    hide(cardPanel); hide(victoryPanel); show(startCard, 'block'); if (diceResult) diceResult.textContent = '';
+    hide(cardPanel); hide(victoryPanel); show(startCard, 'block'); if (diceResult) { diceResult.textContent = ''; diceResult.classList.remove('is-lucky'); }
     if (startButton) { show(startButton, 'inline-flex'); startButton.disabled = false; }
     updateSkillHud();
   }
@@ -171,9 +190,9 @@
     var remaining = Math.max(0, tornadoConfig.cooldown - state.skillClock);
     tornadoSkillHud.classList.toggle('is-active', active);
     tornadoSkillHud.classList.toggle('is-ready', ready);
-    tornadoSkillHud.classList.toggle('is-cooling', !active && !ready);
-    if (tornadoSkillCooldown) tornadoSkillCooldown.style.height = (active || ready ? 0 : Math.min(100, remaining / tornadoConfig.cooldown * 100)) + '%';
-    if (tornadoSkillStatus) tornadoSkillStatus.textContent = active ? '释放中' : (ready ? '准备就绪' : ('冷却 ' + remaining.toFixed(1) + 's'));
+    tornadoSkillHud.classList.toggle('is-cooling', !ready);
+    if (tornadoSkillCooldown) tornadoSkillCooldown.style.height = (ready ? 0 : Math.min(100, remaining / tornadoConfig.cooldown * 100)) + '%';
+    if (tornadoSkillStatus) tornadoSkillStatus.textContent = ready ? '准备就绪' : ((active ? '释放中 · ' : '') + '冷却 ' + remaining.toFixed(1) + 's');
   }
   function emit(x, y, color, n) { for (var i = 0; i < (n || 6); i++) state.particles.push({ x: x, y: y, vx: (Math.random() - .5) * 120, vy: -30 - Math.random() * 90, life: .55 + Math.random() * .35, color: color || '#fff' }); }
   function emitShatter(x, y, color, radius) {
@@ -186,7 +205,8 @@
     }
   }
   function triggerHeroAttack() { state.hero.attackElapsed = 0; }
-  function updateHeroAnimation(dt) { if (state.hero.attackElapsed < 0) return; state.hero.attackElapsed += dt; if (state.hero.attackElapsed >= heroAttackDuration) state.hero.attackElapsed = -1; }
+  function updateHeroAnimation(dt) { if (state.hero.attackElapsed < 0) return; state.hero.attackElapsed += dt; if (state.hero.attackElapsed >= (state.hero.upgraded ? evolvedAttackDuration : heroAttackDuration)) state.hero.attackElapsed = -1; }
+  function triggerCastleHit(x, y) { state.castleHitElapsed = 0; emit(x, y - 18, '#ff6677', 10); }
   function spawnMonster(boss) {
     var hp = boss ? monsterBalance.bossHp : monsterBalance.normalHp;
     var m = { id: Math.random().toString(36).slice(2), t: boss ? .12 : .02, laneOffset: boss ? 0 : (Math.random() * 1.5 - .75), baseR: boss ? 42 : 22, x: 0, y: 0, r: 0, hp: hp, maxHp: hp, speed: boss ? .045 : .105 + Math.random() * .045, slowUntil: 0, slowMultiplier: 1, boss: !!boss, hue: boss ? '#d96b8a' : ['#7b82d6', '#9b76be', '#638bb7'][Math.floor(Math.random() * 3)] };
@@ -251,30 +271,119 @@
   }
   function showCards(level) {
     if (!cardPanel || !cardGrid) return;
-    show(cardPanel, 'flex'); cardGrid.innerHTML = '';
+    show(cardPanel, 'flex'); cardGrid.className = 'card-grid'; cardGrid.innerHTML = '';
+    if (diceResult) diceResult.textContent = '';
+    var selectedCard = null;
+    var diceSelected = false;
+    var confirm = document.createElement('button');
+    confirm.className = 'primary-button claim-button'; confirm.type = 'button'; confirm.textContent = '确定'; confirm.disabled = true;
+    confirm.addEventListener('click', function () {
+      if (state.phase !== 'levelUp' || (!selectedCard && !diceSelected)) return;
+      playSfx(cardClickSfx);
+      if (diceSelected) rollDice(); else chooseCard(selectedCard);
+    });
     var cards = drawCards((level === 3 || level === 5) ? 2 : 3);
     cards.forEach(function (card) {
       var b = document.createElement('button'); b.className = 'skill-card'; b.innerHTML = '<strong>' + card.title + '</strong><span>' + card.text + '（剩余 ' + card.remaining + ' 次）</span>';
-      b.addEventListener('click', function () { playSfx(cardClickSfx); chooseCard(card); }); cardGrid.appendChild(b);
+      b.addEventListener('click', function () {
+        if (state.phase !== 'levelUp') return;
+        playSfx(cardClickSfx); selectedCard = card; diceSelected = false; confirm.disabled = false;
+        Array.prototype.forEach.call(cardGrid.querySelectorAll('.skill-card'), function (option) { option.classList.remove('is-selected'); });
+        b.classList.add('is-selected');
+      }); cardGrid.appendChild(b);
     });
     if (level === 3 || level === 5) {
-      var dice = document.createElement('button'); dice.className = 'skill-card dice-card'; dice.innerHTML = '<strong>🎲 命运骰子</strong><span>掷骰解锁一个随机技能</span>';
-      dice.addEventListener('click', function () { playSfx(cardClickSfx); rollDice(); }); cardGrid.appendChild(dice);
+      var dice = document.createElement('button'); dice.className = 'skill-card dice-card'; dice.innerHTML = '<strong>🎲 命运骰子</strong><span>随机获得一张强化卡<br>掷出 4/5/6 点，额外获得一张<br>真的不试试吗？</span>';
+      dice.addEventListener('click', function () {
+        if (state.phase !== 'levelUp') return;
+        playSfx(cardClickSfx); selectedCard = null; diceSelected = true; confirm.disabled = false;
+        Array.prototype.forEach.call(cardGrid.querySelectorAll('.skill-card'), function (option) { option.classList.remove('is-selected'); });
+        dice.classList.add('is-selected');
+      }); cardGrid.appendChild(dice);
     }
+    if (diceResult) diceResult.appendChild(confirm);
   }
   function chooseCard(card) { if (!applyCard(card)) return; hide(cardPanel); if (state.level === 4 && !state.upgraded) showEvolution(); else resumeBattle(); }
+  function setDieFace(die, value) {
+    var faces = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+    Array.prototype.forEach.call(die.children, function (pip, index) { pip.classList.toggle('is-visible', faces[value].indexOf(index) >= 0); });
+    die.setAttribute('aria-label', value + ' 点');
+  }
+  function createDie(value) {
+    var die = document.createElement('div'); die.className = 'rolled-die'; die.setAttribute('role', 'img');
+    for (var i = 0; i < 9; i++) { var pip = document.createElement('span'); pip.className = 'die-pip'; die.appendChild(pip); }
+    setDieFace(die, value);
+    return die;
+  }
   function rollDice() {
-    var cards = drawCards(1), card = cards[0];
-    if (!card) { hide(cardPanel); resumeBattle(); return; }
-    applyCard(card); if (diceResult) diceResult.textContent = '骰子结果：' + card.title;
-    setTimeout(function () { hide(cardPanel); if (state.level === 4 && !state.upgraded) showEvolution(); else resumeBattle(); }, 420);
+    if (state.phase !== 'levelUp' || !cardGrid) return;
+    var value = Math.random() < .6 ? 4 + Math.floor(Math.random() * 3) : 1 + Math.floor(Math.random() * 3);
+    var cards = drawCards(value >= 4 ? 2 : 1);
+    if (!cards.length) return;
+    state.phase = 'dice';
+    var token = ++diceToken;
+    cardGrid.className = 'card-grid dice-view'; cardGrid.innerHTML = '';
+    var die = createDie(1); die.classList.add('is-rolling'); cardGrid.appendChild(die);
+    if (diceResult) { diceResult.textContent = '骰子滚动中…'; diceResult.classList.remove('is-lucky'); }
+    diceTimer = setInterval(function () { setDieFace(die, Math.floor(Math.random() * 6) + 1); }, 75);
+    diceFinishTimer = setTimeout(function () {
+      if (token !== diceToken || state.phase !== 'dice') return;
+      clearInterval(diceTimer); diceTimer = null;
+      die.classList.remove('is-rolling'); setDieFace(die, value);
+      diceFinishTimer = setTimeout(function () {
+        if (token !== diceToken || state.phase !== 'dice') return;
+        var lucky = value >= 4;
+        cardGrid.className = 'card-grid reward-view' + (lucky ? ' is-lucky' : ''); cardGrid.innerHTML = '';
+        if (lucky) {
+          var burst = document.createElement('div'); burst.className = 'lucky-die-burst'; burst.appendChild(die);
+          for (var i = 0; i < 8; i++) {
+            var sparkle = document.createElement('span'); sparkle.className = 'lucky-sparkle';
+            var angle = i * Math.PI / 4;
+            sparkle.style.setProperty('--dx', Math.round(Math.cos(angle) * 100) + 'px');
+            sparkle.style.setProperty('--dy', Math.round(Math.sin(angle) * 76) + 'px');
+            burst.appendChild(sparkle);
+          }
+          cardGrid.appendChild(burst); playSfx(levelUpSfx);
+        } else cardGrid.appendChild(die);
+        cards.forEach(function (card, index) {
+          var reward = document.createElement('div'); reward.className = 'skill-card reward-card';
+          if (lucky) { reward.classList.add('lucky-reward'); reward.style.animationDelay = (.18 + index * .22) + 's'; }
+          var title = document.createElement('strong'); title.textContent = card.title;
+          var detail = document.createElement('span'); detail.textContent = card.text;
+          reward.appendChild(title); reward.appendChild(detail); cardGrid.appendChild(reward);
+        });
+        if (diceResult) {
+          diceResult.textContent = '';
+          diceResult.classList.toggle('is-lucky', lucky);
+          if (lucky) {
+            var headline = document.createElement('strong'); headline.className = 'lucky-headline';
+            headline.textContent = luckyDiceMessages[Math.floor(Math.random() * luckyDiceMessages.length)];
+            diceResult.appendChild(headline);
+            var rewardDetail = document.createElement('span'); rewardDetail.className = 'lucky-detail';
+            rewardDetail.textContent = '掷出 ' + value + ' 点 · ' + (cards.length > 1 ? '额外获得 1 张强化卡' : '获得 1 张强化卡');
+            diceResult.appendChild(rewardDetail);
+          } else diceResult.textContent = '掷出 ' + value + ' 点，可领取 ' + cards.length + ' 张卡';
+          var claim = document.createElement('button'); claim.className = 'primary-button claim-button'; claim.type = 'button'; claim.textContent = '确定';
+          if (lucky) {
+            claim.disabled = true;
+            setTimeout(function () { if (token === diceToken && state.phase === 'dice') claim.disabled = false; }, 700);
+          }
+          claim.addEventListener('click', function () {
+            if (state.phase !== 'dice') return;
+            playSfx(cardClickSfx); cards.forEach(applyCard); hide(cardPanel); resumeBattle();
+          });
+          if (!lucky) diceResult.appendChild(document.createElement('br'));
+          diceResult.appendChild(claim);
+        }
+      }, 180);
+    }, 1200);
   }
   function showEvolution() {
     state.phase = 'evolve'; if (!cardGrid || !cardPanel) return resumeBattle(); cardGrid.innerHTML = '';
     var b = document.createElement('button'); b.className = 'skill-card evolution-card'; b.innerHTML = '<strong>✨ 进化：星辉守卫</strong><span>换上升级形态，解锁更强的攻击。</span>';
-    b.addEventListener('click', function () { playSfx(cardClickSfx); playSfx(levelUpSfx); state.upgraded = true; state.hero.upgraded = true; hide(cardPanel); resumeBattle(); }); cardGrid.appendChild(b); show(cardPanel, 'flex');
+    b.addEventListener('click', function () { playSfx(cardClickSfx); playSfx(levelUpSfx); state.upgraded = true; state.hero.upgraded = true; state.hero.attackElapsed = -1; hide(cardPanel); resumeBattle(); }); cardGrid.appendChild(b); show(cardPanel, 'flex');
   }
-  function resumeBattle() { state.phase = 'battle'; state.spawnClock = 0; state.attackClock = 0; state.skillClock = 0; if (state.level >= 5 && !state.bossSpawned) { state.phase = 'boss'; state.bossSpawned = true; spawnMonster(true); } }
+  function resumeBattle() { state.phase = 'battle'; state.spawnClock = 0; state.attackClock = 0; if (state.level >= 5 && !state.bossSpawned) { state.phase = 'boss'; state.bossSpawned = true; spawnMonster(true); } }
   function win() { state.phase = 'victory'; hide(startCard); hide(cardPanel); show(victoryPanel, 'flex'); }
   function restart() { resetWorld(); draw(); }
   function nearestMonster() {
@@ -314,13 +423,14 @@
         });
       });
     }
-    state.attackClock = basicAttackCooldown;
+    state.attackClock = state.hero.upgraded ? evolvedAttackDuration : heroAttackDuration;
     return true;
   }
   function shoot(kind) { return launchAttack(nearestMonster(), kind || 'basic'); }
   function update(dt) {
     state.elapsed += dt; state.particles.forEach(function (p) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 130 * dt; p.rotation = (p.rotation || 0) + (p.spin || 0) * dt; p.life -= dt; }); state.particles = state.particles.filter(function (p) { return p.life > 0; }); state.impacts.forEach(function (fx) { fx.life -= dt; }); state.impacts = state.impacts.filter(function (fx) { return fx.life > 0; }); state.floats.forEach(function (f) { f.y -= 22 * dt; f.life -= dt; }); state.floats = state.floats.filter(function (f) { return f.life > 0; }); state.xpStars.forEach(function (s) { s.y -= 30 * dt; s.life -= dt; }); state.xpStars = state.xpStars.filter(function (s) { return s.life > 0; });
     updateHeroAnimation(dt);
+    if (state.castleHitElapsed >= 0) { state.castleHitElapsed += dt; if (state.castleHitElapsed >= castleHitDuration) state.castleHitElapsed = -1; }
     if (state.phase !== 'battle' && state.phase !== 'boss') return;
     state.spawnClock += dt; state.attackClock = Math.max(0, state.attackClock - dt); state.skillClock += dt;
     updateTornado(dt);
@@ -331,7 +441,7 @@
     // if (state.attackClock > .72) { state.attackClock = 0; shoot('basic'); }
     // 技能自动释放暂时注释，先单独验证主角普通攻击。
     // if (state.skillClock > (state.selectedSkill === 'wind' ? .38 : 1.1)) { state.skillClock = 0; shoot('skill'); }
-    state.monsters.slice().forEach(function (m) { if (!m.boss) { var reacting = m.tornadoReaction, stunned = reacting && reacting.age <= .42; if (!stunned) { var speedMultiplier = m.slowUntil > state.elapsed ? m.slowMultiplier : 1; m.t += m.speed * speedMultiplier * dt; updateMonsterPose(m); } } if (m.t >= 1) { var index = state.monsters.indexOf(m); if (index >= 0) state.monsters.splice(index, 1); state.hero.hp -= m.boss ? 14 : 5; if (state.hero.hp <= 0) state.hero.hp = state.hero.maxHp; } });
+    state.monsters.slice().forEach(function (m) { if (!m.boss && !m.tornadoReaction) { var speedMultiplier = m.slowUntil > state.elapsed ? m.slowMultiplier : 1; m.t += m.speed * speedMultiplier * dt; updateMonsterPose(m); } if (m.t >= 1) { var index = state.monsters.indexOf(m); if (index >= 0) state.monsters.splice(index, 1); state.hero.hp -= m.boss ? 14 : 5; triggerCastleHit(m.x, m.y); if (state.hero.hp <= 0) state.hero.hp = state.hero.maxHp; } });
     state.projectiles.forEach(function (p) {
       if (p.delay > 0) { p.delay -= dt; p.prevX = p.x; p.prevY = p.y; return; }
       if (!p.target || state.monsters.indexOf(p.target) < 0) { p.life = -1; return; }
@@ -345,11 +455,29 @@
       var sourceWidth = W / scale, sourceHeight = H / scale;
       var sourceX = (battlefieldImage.width - sourceWidth) * .5;
       var sourceY = (battlefieldImage.height - sourceHeight) * .58;
+      backgroundView = { scale: scale, sourceX: sourceX, sourceY: sourceY };
       ctx.drawImage(battlefieldImage, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, W, H);
       return;
     }
+    backgroundView = null;
     var g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#b7d9f4'); g.addColorStop(1, '#f7d8dc'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = 'rgba(255, 236, 177, .32)'; ctx.beginPath(); ctx.moveTo(battlefieldPath.farLeft, battlefieldPath.farY); ctx.lineTo(battlefieldPath.farRight, battlefieldPath.farY); ctx.lineTo(battlefieldPath.nearRight, battlefieldPath.nearY); ctx.lineTo(battlefieldPath.nearLeft, battlefieldPath.nearY); ctx.closePath(); ctx.fill();
+  }
+  function drawCastle() {
+    if (!castleImageReady || !backgroundView) return;
+    var view = backgroundView;
+    var x = -view.sourceX * view.scale, y = (battlefieldImage.height - castleImage.height - view.sourceY) * view.scale;
+    var width = castleImage.width * view.scale, height = castleImage.height * view.scale;
+    var age = state.castleHitElapsed, decay = age < 0 ? 0 : Math.pow(1 - age / castleHitDuration, 2);
+    ctx.save();
+    ctx.translate(Math.sin(age * 74) * 9 * decay, Math.sin(age * 105) * 5 * decay);
+    ctx.drawImage(castleImage, x, y, width, height);
+    if (decay > 0) {
+      ctx.globalAlpha = .72 * decay * (.78 + .22 * Math.cos(age * 58));
+      ctx.shadowColor = '#ff365a'; ctx.shadowBlur = 24;
+      ctx.drawImage(castleTint, x, y, width, height);
+    }
+    ctx.restore();
   }
   function drawTornado() {
     var tornado = state.tornado;
@@ -363,21 +491,25 @@
     ctx.fillStyle = 'rgba(204, 244, 255, .07)';
     ctx.strokeStyle = 'rgba(220, 249, 255, .18)';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.ellipse(tornado.x, tornado.y + size * .22, tornadoConfig.pullRadius * tornado.scale, tornadoConfig.pullRadius * tornado.scale * .62, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(tornado.x, tornado.y, tornadoConfig.pullRadius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.translate(tornado.x, tornado.y - size * .16);
     ctx.rotate(Math.sin(tornado.age * 5) * .035);
     if (frame && frame.complete && frame.naturalWidth) {
       ctx.drawImage(frame, -size / 2, -size / 2, size, size);
     }
     ctx.restore();
+  }
+  function drawTornadoSticker() {
+    var tornado = state.tornado;
+    if (!tornado) return;
     if (tornadoSticker.complete && tornadoSticker.naturalWidth) {
-      var popProgress = clamp01(tornado.age / .24);
-      var popScale = popProgress < .68 ? .2 + popProgress / .68 * 1.12 : 1.32 - (popProgress - .68) / .32 * .32;
-      var stickerAlpha = Math.min(1, tornado.age / .08);
-      var stickerWidth = 140, stickerHeight = stickerWidth * tornadoSticker.naturalHeight / tornadoSticker.naturalWidth;
+      var popProgress = clamp01(tornado.age / .45);
+      var popScale = popProgress < .65 ? .15 + popProgress / .65 * 1.1 : 1.25 - (popProgress - .65) / .35 * .25;
+      var stickerAlpha = Math.min(1, tornado.age / .12);
+      var stickerWidth = 170, stickerHeight = stickerWidth * tornadoSticker.naturalHeight / tornadoSticker.naturalWidth;
       ctx.save();
       ctx.globalAlpha = stickerAlpha;
-      ctx.translate(state.hero.x + 125, state.hero.y - 145);
+      ctx.translate(state.hero.x + 165, state.hero.y - 245 + (1 - popProgress) * 20);
       ctx.scale(popScale, popScale);
       ctx.drawImage(tornadoSticker, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
       ctx.restore();
@@ -397,15 +529,19 @@
     });
   }
   function drawHero() {
-    var h = state.hero, scale = 1, image = heroImage;
-    if (h.attackElapsed >= 0 && Number.isFinite(h.attackElapsed) && heroAttackFrames.length) {
-      var frameIndex = Math.min(heroAttackFrames.length - 1, Math.floor(h.attackElapsed / heroAttackFrameDuration));
-      if (heroAttackFrames[frameIndex].complete) image = heroAttackFrames[frameIndex];
+    var h = state.hero, scale = 1, frames = h.upgraded ? evolvedAttackFrames : heroAttackFrames;
+    var image = h.upgraded && evolvedAttackFrames[0].naturalWidth ? evolvedAttackFrames[0] : heroImage;
+    if (h.attackElapsed >= 0 && Number.isFinite(h.attackElapsed) && frames.length) {
+      var frameIndex = Math.min(frames.length - 1, Math.floor(h.attackElapsed / heroAttackFrameDuration));
+      if (frames[frameIndex].naturalWidth) image = frames[frameIndex];
     }
     if (image.complete && image.naturalWidth) {
       var maxWidth = 188 * scale, maxHeight = 226 * scale, ratio = image.naturalWidth / image.naturalHeight;
       var drawWidth = Math.round(Math.min(maxWidth, maxHeight * ratio)), drawHeight = Math.round(drawWidth / ratio);
-      var drawX = Math.round(h.x - drawWidth / 2), drawY = Math.round(h.y - drawHeight + 70);
+      // 变身后以图片里的脚底 (211, 448) 对齐原站位，所有攻击帧共用同一画布坐标。
+      var frameScale = drawWidth / image.naturalWidth;
+      var drawX = h.upgraded && image !== heroImage ? Math.round(h.x - 211 * frameScale) : Math.round(h.x - drawWidth / 2);
+      var drawY = h.upgraded && image !== heroImage ? Math.round(h.y + 58 - 448 * frameScale) : Math.round(h.y - drawHeight + 70);
       ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight); return;
     }
     ctx.save(); ctx.translate(h.x, h.y); ctx.scale(scale, scale); ctx.fillStyle = h.upgraded ? '#8d6de3' : '#5f68b9'; ctx.beginPath(); ctx.moveTo(-34, 42); ctx.quadraticCurveTo(0, -2, 34, 42); ctx.fill(); ctx.fillStyle = '#ffd6b3'; ctx.beginPath(); ctx.arc(0, -12, 22, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#2e2b5f'; ctx.beginPath(); ctx.arc(0, -22, 23, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#ffe18a'; ctx.fillRect(-37, -2, 8, 34); ctx.fillStyle = '#fff4b0'; ctx.beginPath(); ctx.arc(-34, -5, 9, 0, Math.PI * 2); ctx.fill(); ctx.restore();
@@ -455,9 +591,10 @@
   }
   function draw() {
     drawBackground();
+    drawCastle();
     drawTornado();
     state.monsters.slice().sort(function (a, b) { return a.y - b.y; }).forEach(function (m) { ctx.fillStyle = m.hue; ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(m.x - m.r * .28, m.y - m.r * .16, Math.max(4, m.r * .18), 0, Math.PI * 2); ctx.arc(m.x + m.r * .28, m.y - m.r * .16, Math.max(4, m.r * .18), 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#54355f'; ctx.beginPath(); ctx.arc(m.x - m.r * .28, m.y - m.r * .16, Math.max(1.5, m.r * .06), 0, Math.PI * 2); ctx.arc(m.x + m.r * .28, m.y - m.r * .16, Math.max(1.5, m.r * .06), 0, Math.PI * 2); ctx.fill(); if (m.boss) { ctx.fillStyle = '#fff0a5'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('BOSS', m.x, m.y - m.r - 10); } if (m.hp < m.maxHp) { ctx.fillStyle = '#6d3e63'; ctx.fillRect(m.x - m.r, m.y - m.r - 7, m.r * 2, 5); ctx.fillStyle = '#f28ca7'; ctx.fillRect(m.x - m.r, m.y - m.r - 7, m.r * 2 * m.hp / m.maxHp, 5); } });
-    drawMonsterReactions(); drawProjectiles(); drawHero(); drawImpacts(); drawParticles(); state.floats.forEach(function (f) { ctx.globalAlpha = Math.max(0, f.life); ctx.fillStyle = '#fff3a8'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y); }); state.xpStars.forEach(function (s) { ctx.globalAlpha = Math.max(0, s.life); ctx.fillStyle = '#ffe29a'; ctx.font = 'bold 18px sans-serif'; ctx.fillText('✦', s.x, s.y); }); ctx.globalAlpha = 1;
+    drawMonsterReactions(); drawProjectiles(); drawHero(); drawTornadoSticker(); drawImpacts(); drawParticles(); state.floats.forEach(function (f) { ctx.globalAlpha = Math.max(0, f.life); ctx.fillStyle = '#fff3a8'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.text, f.x, f.y); }); state.xpStars.forEach(function (s) { ctx.globalAlpha = Math.max(0, s.life); ctx.fillStyle = '#ffe29a'; ctx.font = 'bold 18px sans-serif'; ctx.fillText('✦', s.x, s.y); }); ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(50,37,77,.72)'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'left'; ctx.fillText('Lv.' + state.level + '  XP ' + state.xp + (isFinite(state.nextXp) ? ' / ' + state.nextXp : ''), 24, 34); ctx.fillText('状态：' + state.phase + '  卡牌：' + (state.selectedCardTitle || '龙卷风'), 24, 59); ctx.fillStyle = '#5b436c'; ctx.fillRect(24, 75, 210, 12); ctx.fillStyle = '#f28ca7'; ctx.fillRect(24, 75, 210 * state.hero.hp / state.hero.maxHp, 12); ctx.fillStyle = 'rgba(50,37,77,.72)'; ctx.font = 'bold 14px sans-serif'; ctx.fillText(state.attackClock > 0 ? '攻击冷却：' + state.attackClock.toFixed(2) + 's' : '攻击就绪', 24, 110);
   }
   function loop(now) { if (!state.last) state.last = now; var dt = Math.min(.05, (now - state.last) / 1000); state.last = now; update(dt); draw(); if (state.phase !== 'victory') requestAnimationFrame(loop); }
