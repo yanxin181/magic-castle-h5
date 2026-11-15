@@ -100,6 +100,7 @@ export class BattleManager extends Component {
             }
         }
         for (const enemy of [...this.enemies]) {
+            if (!manager.isBattleActive) return;
             this.animateDragon(enemy);
             this.moveEnemy(enemy, dt);
         }
@@ -311,7 +312,7 @@ export class BattleManager extends Component {
         enemy.node.setPosition(this.laneToX(enemy.lane, nextY), nextY);
         this.updateEnemyDepth(enemy.node, nextY);
         if (nextY <= this.castleY) {
-            this.gameManager?.damageCastle(enemy.damage);
+            this.gameManager?.damageCastle(enemy.isBoss ? this.gameManager.health : enemy.damage);
             this.removeEnemy(enemy);
         }
     }
