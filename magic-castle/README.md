@@ -8,7 +8,7 @@
 
 ## 游戏预览
 
-[▶ 点击观看游戏试玩视频](./%E6%B8%B8%E6%88%8F%E8%AF%95%E7%8E%A9%E5%BD%95%E5%B1%8F7M.mp4)
+https://github.com/user-attachments/assets/cffc1a28-5df2-4ab7-ad75-b756cbe99014
 
 ## 创作灵感
 
