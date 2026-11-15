@@ -43,7 +43,7 @@ https://github.com/user-attachments/assets/cffc1a28-5df2-4ab7-ad75-b756cbe99014
 
 项目使用 **Cocos Creator 3.8.4** 和 TypeScript 开发。
 
-1. 使用 Cocos Creator 3.8.4 打开 `magic-castle` 项目目录。
+1. 使用 Cocos Creator 3.8.4 打开当前仓库目录。
 2. 打开 `assets/scenes/BattleScene.scene` 场景。
 3. 在编辑器中运行预览。
 
