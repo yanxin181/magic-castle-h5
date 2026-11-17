@@ -40,7 +40,7 @@ https://github.com/user-attachments/assets/cffc1a28-5df2-4ab7-ad75-b756cbe99014
 - ❔ 怪物头顶先冒出问号，再慢慢朝龙卷风走去——就好像它们真的相信那里可以回血一样。
 
 
-## 🛠️ 打开项目111
+## 🛠️ 打开项目
 
 项目使用 **Cocos Creator 3.8.4** 和 TypeScript 开发。
 
