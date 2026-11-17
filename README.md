@@ -7,6 +7,7 @@
 《Magic Castle》是一款以魔法公主守护城堡为主题的 2D 试玩广告游戏。玩家在短时间内抵御怪物、抽取强化卡牌，并迎战体型庞大的恶龙。
 
 ## 🎬 游戏预览
+试玩连接：https://magic-castle-h5.yanxin1813.workers.dev/
 
 https://github.com/user-attachments/assets/cffc1a28-5df2-4ab7-ad75-b756cbe99014
 
